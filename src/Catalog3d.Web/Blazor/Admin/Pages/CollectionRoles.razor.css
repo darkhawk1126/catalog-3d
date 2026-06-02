@@ -1,0 +1,45 @@
+.page-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 24px;
+}
+
+.page-header-title {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.section-heading {
+    margin-bottom: 12px;
+}
+
+.assignments-section {
+    margin-bottom: 32px;
+}
+
+.assignments-grid {
+    width: 100%;
+}
+
+.add-section {
+    max-width: 600px;
+}
+
+.add-card {
+    padding: 20px;
+}
+
+.helper-text {
+    font-size: var(--type-ramp-minus-1-font-size);
+    color: var(--neutral-foreground-hint);
+    line-height: 1.4;
+}
+
+code {
+    background: var(--neutral-fill-rest);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 0.9em;
+}

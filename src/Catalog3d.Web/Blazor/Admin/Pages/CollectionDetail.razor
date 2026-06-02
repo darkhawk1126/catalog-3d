@@ -1,0 +1,208 @@
+@page "/collections/{Slug}"
+@namespace Catalog3d.Web.Blazor.Admin.Pages
+@attribute [Authorize]
+@using Catalog3d.Domain.Entities
+
+<PageTitle>@(_collection?.Name ?? Slug) — catalog-3d</PageTitle>
+
+@if (_loading)
+{
+    <FluentProgressRing />
+}
+else if (_collection is null)
+{
+    <FluentLabel>Collection not found.</FluentLabel>
+}
+else
+{
+    @* Page header *@
+    <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" Style="margin-bottom: 1rem; flex-wrap: wrap; gap: .5rem;">
+        <FluentAnchor Href="/collections" Appearance="Appearance.Hypertext" IconStart="@(new Size20.ArrowLeft())">
+            Collections
+        </FluentAnchor>
+        <FluentLabel Typo="Typography.H4" Style="flex: 1; margin-left: .5rem;">@_collection.Name</FluentLabel>
+
+        @if (_isAdmin)
+        {
+            <FluentButton Appearance="Appearance.Neutral"
+                          IconStart="@(new Size20.Edit())"
+                          OnClick="@(() => Nav.NavigateTo($"/collections/{Slug}/edit"))">
+                Edit
+            </FluentButton>
+            <FluentButton Appearance="Appearance.Neutral"
+                          IconStart="@(new Size20.PeopleTeam())"
+                          OnClick="@(() => Nav.NavigateTo($"/collections/{Slug}/roles"))">
+                Manage Roles
+            </FluentButton>
+        }
+        @if (_canUpload)
+        {
+            <FluentButton Appearance="Appearance.Accent"
+                          IconStart="@(new Size20.ArrowUpload())"
+                          OnClick="@(() => Nav.NavigateTo($"/collections/{Slug}/upload"))">
+                Upload Model
+            </FluentButton>
+        }
+    </FluentStack>
+
+    @* Collection metadata card *@
+    <FluentCard Style="margin-bottom: 1.5rem; padding: 1rem;">
+        <FluentStack Orientation="Orientation.Vertical" Style="gap: .25rem;">
+            <FluentStack Orientation="Orientation.Horizontal" Style="gap: 2rem; flex-wrap: wrap;">
+                <div>
+                    <FluentLabel Weight="FontWeight.Bold">Slug</FluentLabel>
+                    <FluentLabel><code>@_collection.Slug</code></FluentLabel>
+                </div>
+                <div>
+                    <FluentLabel Weight="FontWeight.Bold">Your Role</FluentLabel>
+                    <FluentBadge Appearance="Appearance.Accent">@(_effectiveRole?.ToString() ?? "—")</FluentBadge>
+                </div>
+                <div>
+                    <FluentLabel Weight="FontWeight.Bold">Created</FluentLabel>
+                    <FluentLabel>@_collection.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</FluentLabel>
+                </div>
+            </FluentStack>
+            @if (!string.IsNullOrWhiteSpace(_collection.Description))
+            {
+                <FluentLabel Style="margin-top: .5rem;">@_collection.Description</FluentLabel>
+            }
+        </FluentStack>
+    </FluentCard>
+
+    @* Models section *@
+    <FluentLabel Typo="Typography.H5" Style="margin-bottom: .75rem;">
+        Models (@_models.Count)
+    </FluentLabel>
+
+    @if (_models.Count == 0)
+    {
+        <FluentLabel>No models in this collection yet.</FluentLabel>
+    }
+    else
+    {
+        <FluentDataGrid Items="@_models.AsQueryable()"
+                        GridTemplateColumns="auto 1fr auto auto auto auto"
+                        TGridItem="ModelRow">
+            <TemplateColumn Title="Thumbnail" Style="width: 64px;">
+                @if (context.HasThumbnail)
+                {
+                    <img src="/api/v1/models/@context.Slug/thumbnail"
+                         alt="@context.Name thumbnail"
+                         style="width: 56px; height: 56px; object-fit: cover; border-radius: 4px;" />
+                }
+                else
+                {
+                    <FluentIcon Value="@(new Size24.Cube())" Color="Color.Neutral" />
+                }
+            </TemplateColumn>
+            <PropertyColumn Title="Name" Property="@(r => r.Name)" Sortable="true" />
+            <TemplateColumn Title="Status">
+                <FluentBadge Appearance="Appearance.Neutral" BackgroundColor="@StatusColor(context.Status)">
+                    @StatusLabel(context.Status)
+                </FluentBadge>
+            </TemplateColumn>
+            <PropertyColumn Title="Files" Property="@(r => r.FileCount)" Align="Align.End" />
+            <PropertyColumn Title="Updated" Property="@(r => r.UpdatedDisplay)" />
+            <TemplateColumn Title="">
+                <FluentAnchor Href="@($"/models/{context.Slug}")" Appearance="Appearance.Hypertext">Details</FluentAnchor>
+            </TemplateColumn>
+        </FluentDataGrid>
+    }
+}
+
+@code {
+    [Parameter] public string Slug { get; set; } = string.Empty;
+
+    [Inject] AdminAuthHelper AuthHelper { get; set; } = null!;
+    [Inject] IDbContextFactory<CatalogDbContext> DbFactory { get; set; } = null!;
+    [Inject] NavigationManager Nav { get; set; } = null!;
+
+    private bool _loading = true;
+    private bool _isAdmin;
+    private bool _canUpload;
+    private CollectionRole? _effectiveRole;
+    private Collection? _collection;
+    private List<ModelRow> _models = new();
+
+    private sealed record ModelRow(
+        Guid Id,
+        string Name,
+        string Slug,
+        ModelStatus Status,
+        int FileCount,
+        bool HasThumbnail,
+        string UpdatedDisplay);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthHelper.InitializeAsync();
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        _collection = await db.Collections
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Slug == Slug);
+
+        if (_collection is null)
+        {
+            Nav.NavigateTo("/collections");
+            return;
+        }
+
+        _isAdmin = await AuthHelper.IsCollectionAdminAsync(_collection.Id);
+        _canUpload = _isAdmin || await AuthHelper.HasCollectionRoleAsync(_collection.Id, CollectionRole.Uploader);
+
+        // Resolve effective role for display.
+        _effectiveRole = _isAdmin ? CollectionRole.Admin
+            : _canUpload ? CollectionRole.Uploader
+            : await AuthHelper.HasCollectionRoleAsync(_collection.Id, CollectionRole.Download) ? CollectionRole.Download
+            : await AuthHelper.HasCollectionRoleAsync(_collection.Id, CollectionRole.Preview) ? CollectionRole.Preview
+            : null;
+
+        // Load models with file counts and thumbnail presence.
+        var modelData = await db.Models
+            .AsNoTracking()
+            .Where(m => m.CollectionId == _collection.Id)
+            .OrderBy(m => m.Name)
+            .Select(m => new
+            {
+                m.Id,
+                m.Name,
+                m.Slug,
+                m.Status,
+                m.UpdatedAt,
+                FileCount = m.Files.Count(),
+                HasThumbnail = m.Files.Any(f => f.Kind == ModelFileKind.Thumbnail && f.RenderStatus == RenderStatus.Complete)
+            })
+            .ToListAsync();
+
+        _models = modelData
+            .Select(m => new ModelRow(
+                m.Id,
+                m.Name,
+                m.Slug,
+                m.Status,
+                m.FileCount,
+                m.HasThumbnail,
+                m.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd")))
+            .ToList();
+
+        _loading = false;
+    }
+
+    private static string StatusLabel(ModelStatus status) => status switch
+    {
+        ModelStatus.Ready      => "Ready",
+        ModelStatus.Processing => "Processing",
+        ModelStatus.Failed     => "Failed",
+        _                      => status.ToString()
+    };
+
+    private static string StatusColor(ModelStatus status) => status switch
+    {
+        ModelStatus.Ready      => "var(--success-fill-rest)",
+        ModelStatus.Processing => "var(--accent-fill-rest)",
+        ModelStatus.Failed     => "var(--error-fill-rest)",
+        _                      => "var(--neutral-fill-rest)"
+    };
+}

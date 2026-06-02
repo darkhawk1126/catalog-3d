@@ -3,6 +3,7 @@ using Catalog3d.Domain.Entities;
 using Catalog3d.Domain.Enums;
 using Catalog3d.Infrastructure.Persistence;
 using Catalog3d.Infrastructure.Rendering;
+using Catalog3d.Web.Auth;
 using Catalog3d.Web.Endpoints.Dto;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
@@ -22,6 +23,11 @@ internal static class EndpointRegistration
     /// </summary>
     internal static WebApplication MapCatalogEndpoints(this WebApplication app)
     {
+        // Dev-mode sign-in/sign-out form endpoints. Active only when Auth:Provider = Dev.
+        var provider = app.Configuration["Auth:Provider"] ?? "Dev";
+        if (!provider.Equals("Oidc", StringComparison.OrdinalIgnoreCase))
+            app.MapDevLoginEndpoints();
+
         // .WithOpenApi() is deprecated in .NET 10; OpenAPI document generation is automatic.
         var v1 = app.MapGroup("/api/v1");
 
@@ -236,8 +242,14 @@ internal static class EndpointRegistration
             .AuthorizeAsync(collection.Id, userContext, CollectionRole.Uploader, cancellationToken)
             .ConfigureAwait(false);
 
+        // Collections are invisible to unauthorized callers — 404, not 403.
+        // Preview-only callers (who DO have a role but insufficient privilege) get 403.
+        var hasAnyRole = await authService
+            .AuthorizeAsync(collection.Id, userContext, CollectionRole.Preview, cancellationToken)
+            .ConfigureAwait(false);
+
         if (!hasAccess)
-            return Results.Forbid();
+            return hasAnyRole ? Results.Forbid() : Results.NotFound();
 
         if (!httpContext.Request.HasFormContentType)
             return Results.BadRequest("Request must be multipart/form-data.");

@@ -1,0 +1,160 @@
+@page "/collections/{Slug}/edit"
+@namespace Catalog3d.Web.Blazor.Admin.Pages
+@attribute [Authorize]
+
+<PageTitle>Edit @(Slug) — catalog-3d</PageTitle>
+
+@if (_loading)
+{
+    <FluentProgressRing />
+}
+else if (!_authorized)
+{
+    <FluentLabel>Access denied.</FluentLabel>
+}
+else
+{
+    <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" Style="margin-bottom: 1rem;">
+        <FluentAnchor Href="@($"/collections/{Slug}")" Appearance="Appearance.Hypertext" IconStart="@(new Size20.ArrowLeft())">
+            @Slug
+        </FluentAnchor>
+        <FluentLabel Typo="Typography.H4" Style="margin-left: .5rem;">Edit Collection</FluentLabel>
+    </FluentStack>
+
+    <EditForm Model="@_form" OnValidSubmit="HandleSubmitAsync">
+        <DataAnnotationsValidator />
+
+        <FluentStack Orientation="Orientation.Vertical" Style="max-width: 560px; gap: 1rem;">
+
+            <FluentTextField @bind-Value="@_form.Name"
+                             Label="Name"
+                             Required="true"
+                             Style="width: 100%;" />
+            <FluentValidationMessage For="@(() => _form.Name)" />
+
+            @* Slug is immutable — shown read-only as the stable external identifier. *@
+            <FluentTextField Value="@Slug"
+                             Label="Slug (immutable)"
+                             Disabled="true"
+                             Style="width: 100%;" />
+            <FluentLabel Style="font-size: .75rem; color: var(--neutral-foreground-hint-rest);">
+                The slug is the stable external identifier used by the API and wiki embeds. It cannot be changed.
+            </FluentLabel>
+
+            <FluentTextArea @bind-Value="@_form.Description"
+                            Label="Description"
+                            Rows="4"
+                            Style="width: 100%;" />
+
+            @if (_errorMessage is not null)
+            {
+                <FluentMessageBar Intent="MessageIntent.Error">@_errorMessage</FluentMessageBar>
+            }
+
+            <FluentStack Orientation="Orientation.Horizontal">
+                <FluentButton Type="ButtonType.Submit"
+                              Appearance="Appearance.Accent"
+                              Loading="@_saving">
+                    Save Changes
+                </FluentButton>
+                <FluentButton Appearance="Appearance.Neutral"
+                              OnClick="@(() => Nav.NavigateTo($"/collections/{Slug}"))">
+                    Cancel
+                </FluentButton>
+            </FluentStack>
+
+        </FluentStack>
+    </EditForm>
+}
+
+@code {
+    [Parameter] public string Slug { get; set; } = string.Empty;
+
+    [Inject] AdminAuthHelper AuthHelper { get; set; } = null!;
+    [Inject] IDbContextFactory<CatalogDbContext> DbFactory { get; set; } = null!;
+    [Inject] NavigationManager Nav { get; set; } = null!;
+    [Inject] IToastService Toast { get; set; } = null!;
+
+    private bool _loading = true;
+    private bool _authorized;
+    private bool _saving;
+    private string? _errorMessage;
+    private Guid _collectionId;
+
+    private CollectionForm _form = new();
+
+    private sealed class CollectionForm
+    {
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Name is required.")]
+        [System.ComponentModel.DataAnnotations.MaxLength(200)]
+        public string Name { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.MaxLength(2000)]
+        public string Description { get; set; } = string.Empty;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthHelper.InitializeAsync();
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var collection = await db.Collections
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Slug == Slug);
+
+        if (collection is null)
+        {
+            Nav.NavigateTo("/collections");
+            return;
+        }
+
+        bool isAdmin = await AuthHelper.IsCollectionAdminAsync(collection.Id);
+        if (!isAdmin)
+        {
+            Nav.NavigateTo($"/collections/{Slug}");
+            return;
+        }
+
+        _collectionId = collection.Id;
+        _form.Name = collection.Name;
+        _form.Description = collection.Description;
+        _authorized = true;
+        _loading = false;
+    }
+
+    private async Task HandleSubmitAsync()
+    {
+        _errorMessage = null;
+        _saving = true;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var collection = await db.Collections.FindAsync(_collectionId);
+            if (collection is null)
+            {
+                _errorMessage = "Collection no longer exists.";
+                return;
+            }
+
+            collection.Name = _form.Name.Trim();
+            collection.Description = _form.Description.Trim();
+            collection.UpdatedAt = DateTimeOffset.UtcNow;
+
+            await db.SaveChangesAsync();
+
+            Toast.ShowSuccess("Collection updated.");
+            Nav.NavigateTo($"/collections/{Slug}");
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to save: {ex.Message}";
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

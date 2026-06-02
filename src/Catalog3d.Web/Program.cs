@@ -1,9 +1,11 @@
 using Catalog3d.Infrastructure.Rendering;
 using Catalog3d.Web.Auth;
+using Catalog3d.Web.Blazor;
 using Catalog3d.Web.Endpoints;
 using Catalog3d.Web.Persistence;
 using Catalog3d.Web.Rendering;
 using Catalog3d.Web.Storage;
+using Microsoft.FluentUI.AspNetCore.Components;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -29,6 +31,18 @@ else
     builder.Services.AddDevAuthentication(builder.Configuration);
 }
 
+// Blazor Server admin UI + FluentUI component library.
+// AddBlazorAdmin registers RazorComponents, InteractiveServer render mode,
+// CascadingAuthenticationState, and AdminAuthHelper.
+builder.Services.AddBlazorAdmin();
+
+// FluentUI Blazor component library services (IToastService, IDialogService, etc.).
+// Scoped lifetime is the default and correct choice for Blazor Server circuits.
+builder.Services.AddFluentUIComponents();
+
+// Antiforgery is required by Blazor Server interactive render mode.
+builder.Services.AddAntiforgery();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -37,10 +51,17 @@ if (app.Environment.IsDevelopment())
     app.MapScalarApiReference();
 }
 
+app.UseStaticFiles();
+app.UseAntiforgery();
 app.UseAuthentication();
 app.UseAuthorization();
 
+// REST API endpoints (external contract — stable versioned URLs).
 app.MapCatalogEndpoints();
+
+// Blazor Server admin UI. Routes declared in Admin/Pages/*.razor.
+// DO NOT add routes here — add @page directives to page components.
+app.MapBlazorAdmin();
 
 app.Run();
 

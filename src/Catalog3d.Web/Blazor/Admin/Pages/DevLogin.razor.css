@@ -1,0 +1,67 @@
+.login-card {
+    max-width: 380px;
+    margin: 4rem auto;
+    padding: 2rem;
+    border: 1px solid var(--neutral-stroke-rest);
+    border-radius: var(--layer-corner-radius);
+    background: var(--neutral-layer-2);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.login-hint {
+    margin: 0;
+    color: var(--neutral-foreground-hint);
+    font-size: 0.875rem;
+}
+
+.field-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+}
+
+.field-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--neutral-foreground-rest);
+}
+
+.dev-select {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--neutral-stroke-input-rest);
+    border-radius: var(--control-corner-radius);
+    background: var(--neutral-fill-input-rest);
+    color: var(--neutral-foreground-rest);
+    font-size: 0.9375rem;
+    cursor: pointer;
+}
+
+.dev-select:focus {
+    outline: 2px solid var(--accent-fill-rest);
+    outline-offset: 1px;
+}
+
+.signin-btn {
+    width: 100%;
+    margin-top: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: var(--accent-fill-rest);
+    color: var(--foreground-on-accent-rest);
+    border: none;
+    border-radius: var(--control-corner-radius);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+
+.signin-btn:hover {
+    background: var(--accent-fill-hover);
+}
+
+.signin-btn:active {
+    background: var(--accent-fill-active);
+}

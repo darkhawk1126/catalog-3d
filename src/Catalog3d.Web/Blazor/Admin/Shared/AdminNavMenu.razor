@@ -1,0 +1,27 @@
+@namespace Catalog3d.Web.Blazor.Admin.Shared
+
+@* Navigation menu. Each FluentNavLink corresponds to a page in the route table.
+   Downstream page agents MUST NOT add nav entries here — all routes are pre-declared.
+   Route table (settled, do not change):
+     /                          — Dashboard
+     /collections               — All collections
+     /collections/new           — Create collection
+     /collections/{slug}        — Collection detail
+     /collections/{slug}/edit   — Edit collection
+     /collections/{slug}/roles  — Role assignments
+     /collections/{slug}/upload — Upload model
+     /models/{slug}             — Model detail
+     /login/dev                 — Dev sign-in (dev scheme only)
+*@
+
+<FluentNavLink Href="/" Match="NavLinkMatch.All"
+               Icon="@(new Size20.Home())"
+               IconPosition="IconPosition.Start">
+    Dashboard
+</FluentNavLink>
+
+<FluentNavLink Href="/collections"
+               Icon="@(new Size20.Folder())"
+               IconPosition="IconPosition.Start">
+    Collections
+</FluentNavLink>

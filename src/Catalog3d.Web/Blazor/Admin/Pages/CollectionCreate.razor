@@ -1,0 +1,208 @@
+@page "/collections/new"
+@namespace Catalog3d.Web.Blazor.Admin.Pages
+@attribute [Authorize]
+
+<PageTitle>New Collection — catalog-3d</PageTitle>
+
+@if (_loading)
+{
+    <FluentProgressRing />
+}
+else if (!_authorized)
+{
+    <FluentLabel>Access denied.</FluentLabel>
+}
+else
+{
+    <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" Style="margin-bottom: 1rem;">
+        <FluentAnchor Href="/collections" Appearance="Appearance.Hypertext" IconStart="@(new Size20.ArrowLeft())">
+            Collections
+        </FluentAnchor>
+        <FluentLabel Typo="Typography.H4" Style="margin-left: .5rem;">New Collection</FluentLabel>
+    </FluentStack>
+
+    <EditForm Model="@_model" OnValidSubmit="HandleSubmitAsync">
+        <DataAnnotationsValidator />
+
+        <FluentStack Orientation="Orientation.Vertical" Style="max-width: 560px; gap: 1rem;">
+
+            <FluentTextField @bind-Value="@_model.Name"
+                             Label="Name"
+                             Placeholder="My Parts Library"
+                             Required="true"
+                             Style="width: 100%;"
+                             @oninput="AutoSlug" />
+            <FluentValidationMessage For="@(() => _model.Name)" />
+
+            <FluentTextField @bind-Value="@_model.Slug"
+                             Label="Slug"
+                             Placeholder="my-parts-library"
+                             Required="true"
+                             Style="width: 100%;"
+                             Disabled="@(!_slugManuallyEdited)" />
+            <FluentValidationMessage For="@(() => _model.Slug)" />
+            @if (!_slugManuallyEdited)
+            {
+                <FluentLabel Style="font-size: .75rem; color: var(--neutral-foreground-hint-rest);">
+                    Auto-generated from name. <span style="cursor:pointer; text-decoration:underline;" @onclick="UnlockSlug">Edit manually</span>
+                </FluentLabel>
+            }
+
+            <FluentTextArea @bind-Value="@_model.Description"
+                            Label="Description"
+                            Placeholder="Optional description"
+                            Rows="4"
+                            Style="width: 100%;" />
+
+            @if (_errorMessage is not null)
+            {
+                <FluentMessageBar Intent="MessageIntent.Error">@_errorMessage</FluentMessageBar>
+            }
+
+            <FluentStack Orientation="Orientation.Horizontal">
+                <FluentButton Type="ButtonType.Submit"
+                              Appearance="Appearance.Accent"
+                              Loading="@_saving">
+                    Create Collection
+                </FluentButton>
+                <FluentButton Appearance="Appearance.Neutral"
+                              OnClick="@(() => Nav.NavigateTo("/collections"))">
+                    Cancel
+                </FluentButton>
+            </FluentStack>
+
+        </FluentStack>
+    </EditForm>
+}
+
+@code {
+    [Inject] AdminAuthHelper AuthHelper { get; set; } = null!;
+    [Inject] IDbContextFactory<CatalogDbContext> DbFactory { get; set; } = null!;
+    [Inject] NavigationManager Nav { get; set; } = null!;
+    [Inject] IToastService Toast { get; set; } = null!;
+
+    private bool _loading = true;
+    private bool _authorized;
+    private bool _saving;
+    private bool _slugManuallyEdited;
+    private string? _errorMessage;
+
+    private CollectionForm _model = new();
+
+    private sealed class CollectionForm
+    {
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Name is required.")]
+        [System.ComponentModel.DataAnnotations.MaxLength(200)]
+        public string Name { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Slug is required.")]
+        [System.ComponentModel.DataAnnotations.RegularExpression(
+            @"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            ErrorMessage = "Slug must be lowercase letters, digits, and hyphens only.")]
+        [System.ComponentModel.DataAnnotations.MaxLength(100)]
+        public string Slug { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.MaxLength(2000)]
+        public string Description { get; set; } = string.Empty;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthHelper.InitializeAsync();
+        if (!AuthHelper.IsSiteAdmin())
+        {
+            Nav.NavigateTo("/collections");
+            return;
+        }
+        _authorized = true;
+        _loading = false;
+    }
+
+    private void AutoSlug(ChangeEventArgs e)
+    {
+        if (_slugManuallyEdited) return;
+        var name = e.Value?.ToString() ?? string.Empty;
+        _model.Slug = Slugify(name);
+    }
+
+    private void UnlockSlug()
+    {
+        _slugManuallyEdited = true;
+    }
+
+    private static string Slugify(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return string.Empty;
+
+        var normalized = input.Trim().ToLowerInvariant();
+        var sb = new System.Text.StringBuilder(normalized.Length);
+        bool lastWasHyphen = false;
+
+        foreach (var ch in normalized)
+        {
+            if (char.IsLetterOrDigit(ch))
+            {
+                sb.Append(ch);
+                lastWasHyphen = false;
+            }
+            else if (!lastWasHyphen && sb.Length > 0)
+            {
+                sb.Append('-');
+                lastWasHyphen = true;
+            }
+        }
+
+        if (sb.Length > 0 && sb[^1] == '-')
+            sb.Length--;
+
+        return sb.ToString();
+    }
+
+    private async Task HandleSubmitAsync()
+    {
+        _errorMessage = null;
+        _saving = true;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            // Check slug uniqueness.
+            bool slugTaken = await db.Collections
+                .AsNoTracking()
+                .AnyAsync(c => c.Slug == _model.Slug);
+
+            if (slugTaken)
+            {
+                _errorMessage = $"Slug \"{_model.Slug}\" is already in use. Choose a different slug.";
+                _saving = false;
+                return;
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            var collection = new Catalog3d.Domain.Entities.Collection
+            {
+                Id = Guid.NewGuid(),
+                Slug = _model.Slug,
+                Name = _model.Name.Trim(),
+                Description = _model.Description.Trim(),
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
+            db.Collections.Add(collection);
+            await db.SaveChangesAsync();
+
+            Toast.ShowSuccess($"Collection \"{collection.Name}\" created.");
+            Nav.NavigateTo($"/collections/{collection.Slug}");
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to create collection: {ex.Message}";
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

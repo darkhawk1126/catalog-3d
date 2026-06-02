@@ -1,0 +1,191 @@
+@page "/"
+@namespace Catalog3d.Web.Blazor.Admin.Pages
+@attribute [Authorize]
+@using Catalog3d.Web.Blazor.Auth
+@using Catalog3d.Domain.Entities
+
+@* Dashboard — landing page for all authenticated users.
+   Stats are scoped: site-admins see totals across all collections;
+   collection-scoped users see counts for their accessible collections only. *@
+
+<PageTitle>Dashboard — catalog-3d</PageTitle>
+
+@if (_loading)
+{
+    <FluentProgressRing Style="display: block; margin: 4rem auto;" />
+}
+else
+{
+    <FluentLabel Typo="Typography.H4" Style="margin-bottom: 1.5rem;">Dashboard</FluentLabel>
+
+    <div class="stats-grid">
+        <FluentCard Class="stat-card">
+            <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" Style="gap: 1rem;">
+                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Size24.AppFolder())" Style="pointer-events: none;" />
+                <div class="stat-body">
+                    <span class="stat-value">@_collectionCount</span>
+                    <span class="stat-label">Collections</span>
+                </div>
+            </FluentStack>
+        </FluentCard>
+
+        <FluentCard Class="stat-card">
+            <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" Style="gap: 1rem;">
+                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Size24.CubeTree())" Style="pointer-events: none;" />
+                <div class="stat-body">
+                    <span class="stat-value">@_modelCount</span>
+                    <span class="stat-label">Models</span>
+                </div>
+            </FluentStack>
+        </FluentCard>
+
+        <FluentCard Class="stat-card">
+            <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" Style="gap: 1rem;">
+                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Size24.ArrowSync())" Style="pointer-events: none;" />
+                <div class="stat-body">
+                    <span class="stat-value">@_pendingRenders</span>
+                    <span class="stat-label">Pending Renders</span>
+                </div>
+            </FluentStack>
+        </FluentCard>
+
+        <FluentCard Class="stat-card">
+            <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" Style="gap: 1rem;">
+                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Size24.ErrorCircle())" Style="pointer-events: none;" />
+                <div class="stat-body">
+                    <span class="stat-value">@_failedRenders</span>
+                    <span class="stat-label">Failed Renders</span>
+                </div>
+            </FluentStack>
+        </FluentCard>
+    </div>
+
+    @if (_recentModels.Count > 0)
+    {
+        <section class="recent-section">
+            <FluentLabel Typo="Typography.H6" Style="margin-bottom: 0.75rem;">Recent Uploads</FluentLabel>
+
+            <FluentDataGrid Items="@_recentModels.AsQueryable()"
+                            GridTemplateColumns="1fr 1fr auto auto"
+                            TGridItem="RecentModelRow">
+                <PropertyColumn Title="Model" Property="@(m => m.Name)" />
+                <PropertyColumn Title="Collection" Property="@(m => m.CollectionName)" />
+                <TemplateColumn Title="Status">
+                    @{
+                        var statusColor = context.Status switch
+                        {
+                            ModelStatus.Ready      => "var(--success-foreground-rest, green)",
+                            ModelStatus.Failed     => "var(--error-foreground-rest, red)",
+                            _                      => "var(--warning-foreground-rest, orange)"
+                        };
+                    }
+                    <span style="color: @statusColor; font-weight: 600;">@context.Status</span>
+                </TemplateColumn>
+                <TemplateColumn Title="Uploaded">
+                    <span title="@context.CreatedAt.ToString("u")">@FormatRelative(context.CreatedAt)</span>
+                </TemplateColumn>
+            </FluentDataGrid>
+        </section>
+    }
+    else
+    {
+        <FluentMessageBar Intent="MessageIntent.Info" Style="margin-top: 1.5rem;">
+            No models uploaded yet.
+            <FluentAnchor Href="/collections">Browse collections</FluentAnchor> to get started.
+        </FluentMessageBar>
+    }
+}
+
+@code {
+    [Inject] AdminAuthHelper AuthHelper { get; set; } = null!;
+    [Inject] IDbContextFactory<CatalogDbContext> DbFactory { get; set; } = null!;
+    [Inject] ICollectionAuthorizationService CollectionAuthService { get; set; } = null!;
+    [Inject] IConfiguration Configuration { get; set; } = null!;
+
+    private bool _loading = true;
+    private int _collectionCount;
+    private int _modelCount;
+    private int _pendingRenders;
+    private int _failedRenders;
+    private List<RecentModelRow> _recentModels = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthHelper.InitializeAsync();
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        if (AuthHelper.IsSiteAdmin())
+        {
+            _collectionCount = await db.Collections.CountAsync();
+            _modelCount      = await db.Models.CountAsync();
+            _pendingRenders  = await db.ModelFiles
+                .CountAsync(f => f.Kind == ModelFileKind.Stl
+                              && (f.RenderStatus == RenderStatus.Pending
+                                  || f.RenderStatus == RenderStatus.Processing));
+            _failedRenders   = await db.ModelFiles
+                .CountAsync(f => f.Kind == ModelFileKind.Stl
+                              && f.RenderStatus == RenderStatus.Failed);
+
+            _recentModels = await db.Models
+                .AsNoTracking()
+                .OrderByDescending(m => m.CreatedAt)
+                .Take(10)
+                .Select(m => new RecentModelRow(m.Name, m.Collection.Name, m.Status, m.CreatedAt))
+                .ToListAsync();
+        }
+        else if (AuthHelper.IsAuthenticated)
+        {
+            var userContext = new ClaimsPrincipalUserContext(
+                AuthHelper.User!, Configuration["Auth:Provider"] ?? "Dev");
+
+            var accessibleIds = await CollectionAuthService
+                .GetAuthorizedCollectionIdsAsync(userContext, CollectionRole.Preview);
+
+            if (accessibleIds.Count > 0)
+            {
+                _collectionCount = accessibleIds.Count;
+                _modelCount      = await db.Models
+                    .CountAsync(m => accessibleIds.Contains(m.CollectionId));
+                _pendingRenders  = await db.ModelFiles
+                    .CountAsync(f => accessibleIds.Contains(f.Model.CollectionId)
+                                  && f.Kind == ModelFileKind.Stl
+                                  && (f.RenderStatus == RenderStatus.Pending
+                                      || f.RenderStatus == RenderStatus.Processing));
+                _failedRenders   = await db.ModelFiles
+                    .CountAsync(f => accessibleIds.Contains(f.Model.CollectionId)
+                                  && f.Kind == ModelFileKind.Stl
+                                  && f.RenderStatus == RenderStatus.Failed);
+
+                _recentModels = await db.Models
+                    .AsNoTracking()
+                    .Where(m => accessibleIds.Contains(m.CollectionId))
+                    .OrderByDescending(m => m.CreatedAt)
+                    .Take(10)
+                    .Select(m => new RecentModelRow(m.Name, m.Collection.Name, m.Status, m.CreatedAt))
+                    .ToListAsync();
+            }
+        }
+
+        _loading = false;
+    }
+
+    private static string FormatRelative(DateTimeOffset dt)
+    {
+        var diff = DateTimeOffset.UtcNow - dt;
+        return diff switch
+        {
+            { TotalMinutes: < 1 }  => "just now",
+            { TotalMinutes: < 60 } => $"{(int)diff.TotalMinutes}m ago",
+            { TotalHours:   < 24 } => $"{(int)diff.TotalHours}h ago",
+            { TotalDays:    < 7  } => $"{(int)diff.TotalDays}d ago",
+            _                      => dt.ToString("MMM d, yyyy"),
+        };
+    }
+
+    private sealed record RecentModelRow(
+        string Name,
+        string CollectionName,
+        ModelStatus Status,
+        DateTimeOffset CreatedAt);
+}

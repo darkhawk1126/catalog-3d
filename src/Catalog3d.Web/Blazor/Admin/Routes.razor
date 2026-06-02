@@ -1,0 +1,32 @@
+@namespace Catalog3d.Web.Blazor.Admin
+
+@* Routes component — the actual Blazor router. Nested inside App.razor's body.
+   All pages in Blazor/Admin/Pages/ are discovered automatically via AppAssembly.
+   DefaultLayout is applied to pages that don't specify their own layout. *@
+
+<Router AppAssembly="@typeof(Routes).Assembly">
+    <Found Context="routeData">
+        <AuthorizeRouteView RouteData="@routeData" DefaultLayout="@typeof(AdminLayout)">
+            <NotAuthorized>
+                @if (!context.User.Identity?.IsAuthenticated ?? true)
+                {
+                    <RedirectToLogin />
+                }
+                else
+                {
+                    <LayoutView Layout="@typeof(AdminLayout)">
+                        <FluentLabel>You do not have permission to access this page.</FluentLabel>
+                    </LayoutView>
+                }
+            </NotAuthorized>
+        </AuthorizeRouteView>
+        <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+    </Found>
+    <NotFound>
+        <PageTitle>Not Found — catalog-3d</PageTitle>
+        <LayoutView Layout="@typeof(AdminLayout)">
+            <FluentLabel Typo="Typography.H4">Page Not Found</FluentLabel>
+            <p>Sorry, there's nothing at this address.</p>
+        </LayoutView>
+    </NotFound>
+</Router>

@@ -1,0 +1,278 @@
+@page "/collections/{Slug}/roles"
+@namespace Catalog3d.Web.Blazor.Admin.Pages
+@attribute [Authorize]
+@using Catalog3d.Domain.Entities
+
+<PageTitle>Roles — @(_collection?.Name ?? Slug) — catalog-3d</PageTitle>
+
+@if (_loading)
+{
+    <FluentProgressRing />
+}
+else if (_collection is null)
+{
+    <FluentMessageBar Intent="MessageIntent.Error">Collection not found.</FluentMessageBar>
+}
+else
+{
+    <div class="page-header">
+        <div class="page-header-title">
+            <FluentBreadcrumb>
+                <FluentBreadcrumbItem Href="/collections">Collections</FluentBreadcrumbItem>
+                <FluentBreadcrumbItem Href="@($"/collections/{Slug}")">@_collection.Name</FluentBreadcrumbItem>
+                <FluentBreadcrumbItem>Roles</FluentBreadcrumbItem>
+            </FluentBreadcrumb>
+            <FluentLabel Typo="Typography.H4">Role Assignments — @_collection.Name</FluentLabel>
+        </div>
+        <FluentSpacer />
+        <FluentButton Appearance="Appearance.Outline"
+                      IconStart="@(new Size20.ArrowLeft())"
+                      OnClick="@(() => Nav.NavigateTo($"/collections/{Slug}"))">
+            Back
+        </FluentButton>
+    </div>
+
+    @* ─── Existing assignments ─────────────────────────────────────────── *@
+    <section class="assignments-section">
+        <FluentLabel Typo="Typography.H6" Class="section-heading">Current Assignments</FluentLabel>
+
+        @if (_assignments.Count == 0)
+        {
+            <FluentMessageBar Intent="MessageIntent.Info">
+                No role assignments yet. Site-admins always hold Admin implicitly.
+            </FluentMessageBar>
+        }
+        else
+        {
+            <FluentDataGrid Items="@_assignments.AsQueryable()"
+                            TGridItem="RoleAssignment"
+                            GridTemplateColumns="1fr 160px 56px"
+                            Class="assignments-grid">
+                <PropertyColumn Title="Principal" Property="@(r => r.Principal)" />
+                <TemplateColumn Title="Role">
+                    <FluentBadge Appearance="@RoleBadgeAppearance(context.Role)">
+                        @context.Role.ToString()
+                    </FluentBadge>
+                </TemplateColumn>
+                <TemplateColumn Title="" Align="Align.End">
+                    <FluentButton Appearance="Appearance.Lightweight"
+                                  IconStart="@(new Size20.Delete())"
+                                  Title="Remove assignment"
+                                  OnClick="@(() => RemoveAssignmentAsync(context))" />
+                </TemplateColumn>
+            </FluentDataGrid>
+        }
+    </section>
+
+    @* ─── Add assignment form ──────────────────────────────────────────── *@
+    <section class="add-section">
+        <FluentLabel Typo="Typography.H6" Class="section-heading">Add Assignment</FluentLabel>
+
+        <FluentCard Class="add-card">
+            <FluentStack Orientation="Orientation.Vertical" VerticalGap="12">
+
+                <FluentTextField @bind-Value="_newPrincipal"
+                                 Label="Principal"
+                                 Placeholder="user:sub-value  or  group:name"
+                                 Style="width: 100%;" />
+                <FluentLabel Class="helper-text">
+                    Format: <strong>user:&lt;oidc-sub&gt;</strong> for a specific user (e.g.
+                    <code>user:abc123</code>) or <strong>group:&lt;name&gt;</strong> for an
+                    OIDC group (e.g. <code>group:media</code>). One principal holds at most
+                    one role per collection; assigning again replaces the existing role.
+                </FluentLabel>
+
+                <FluentSelect TOption="string"
+                              @bind-Value="_newRoleStr"
+                              Label="Role"
+                              Style="width: 200px;">
+                    @foreach (var role in _allRoles)
+                    {
+                        <FluentOption TOption="string" Value="@role.ToString()">@role.ToString()</FluentOption>
+                    }
+                </FluentSelect>
+
+                @if (!string.IsNullOrWhiteSpace(_addError))
+                {
+                    <FluentMessageBar Intent="MessageIntent.Error">@_addError</FluentMessageBar>
+                }
+
+                <div>
+                    <FluentButton Appearance="Appearance.Accent"
+                                  IconStart="@(new Size20.Add())"
+                                  OnClick="@AddAssignmentAsync"
+                                  Loading="@_saving">
+                        Add / Update
+                    </FluentButton>
+                </div>
+            </FluentStack>
+        </FluentCard>
+    </section>
+}
+
+@code {
+    [Parameter] public string Slug { get; set; } = string.Empty;
+
+    [Inject] AdminAuthHelper AuthHelper { get; set; } = null!;
+    [Inject] IDbContextFactory<CatalogDbContext> DbFactory { get; set; } = null!;
+    [Inject] NavigationManager Nav { get; set; } = null!;
+    [Inject] IToastService Toast { get; set; } = null!;
+    [Inject] IDialogService Dialog { get; set; } = null!;
+
+    private Catalog3d.Domain.Entities.Collection? _collection;
+    private List<RoleAssignment> _assignments = new();
+    private bool _loading = true;
+    private bool _saving;
+
+    private string _newPrincipal = string.Empty;
+    private string _newRoleStr = nameof(CollectionRole.Preview);
+    private string _addError = string.Empty;
+
+    private static readonly CollectionRole[] _allRoles =
+        Enum.GetValues<CollectionRole>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthHelper.InitializeAsync();
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        _collection = await db.Collections
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Slug == Slug);
+
+        if (_collection is null)
+        {
+            _loading = false;
+            return;
+        }
+
+        bool isAdmin = await AuthHelper.IsCollectionAdminAsync(_collection.Id);
+        if (!isAdmin)
+        {
+            Nav.NavigateTo($"/collections/{Slug}");
+            return;
+        }
+
+        await LoadAssignmentsAsync(db);
+        _loading = false;
+    }
+
+    private async Task LoadAssignmentsAsync(CatalogDbContext db)
+    {
+        _assignments = await db.RoleAssignments
+            .AsNoTracking()
+            .Where(r => r.CollectionId == _collection!.Id)
+            .OrderBy(r => r.Principal)
+            .ToListAsync();
+    }
+
+    private async Task AddAssignmentAsync()
+    {
+        _addError = string.Empty;
+
+        var principal = _newPrincipal.Trim();
+        if (string.IsNullOrWhiteSpace(principal))
+        {
+            _addError = "Principal is required.";
+            return;
+        }
+
+        if (!principal.StartsWith("user:", StringComparison.OrdinalIgnoreCase) &&
+            !principal.StartsWith("group:", StringComparison.OrdinalIgnoreCase))
+        {
+            _addError = "Principal must start with \"user:\" or \"group:\".";
+            return;
+        }
+
+        if (!Enum.TryParse<CollectionRole>(_newRoleStr, out var role))
+        {
+            _addError = "Invalid role selection.";
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            // Upsert: remove existing row first (composite PK prevents plain Add clash).
+            var existing = await db.RoleAssignments
+                .FirstOrDefaultAsync(r => r.CollectionId == _collection!.Id && r.Principal == principal);
+
+            if (existing is not null)
+            {
+                existing.Role = role;
+            }
+            else
+            {
+                db.RoleAssignments.Add(new RoleAssignment
+                {
+                    CollectionId = _collection!.Id,
+                    Principal = principal,
+                    Role = role
+                });
+            }
+
+            await db.SaveChangesAsync();
+            Toast.ShowSuccess($"Assigned {role} to {principal}.");
+
+            _newPrincipal = string.Empty;
+
+            // Refresh list from a new context.
+            await using var db2 = await DbFactory.CreateDbContextAsync();
+            await LoadAssignmentsAsync(db2);
+        }
+        catch (Exception ex)
+        {
+            Toast.ShowError($"Save failed: {ex.Message}");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task RemoveAssignmentAsync(RoleAssignment assignment)
+    {
+        var dialogRef = await Dialog.ShowConfirmationAsync(
+            $"Remove {assignment.Role} from \"{assignment.Principal}\"?",
+            primaryText: "Remove",
+            secondaryText: "Cancel",
+            title: "Confirm Remove");
+
+        var result = await dialogRef.Result;
+        if (result.Cancelled) return;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var row = await db.RoleAssignments
+                .FirstOrDefaultAsync(r => r.CollectionId == _collection!.Id && r.Principal == assignment.Principal);
+
+            if (row is not null)
+            {
+                db.RoleAssignments.Remove(row);
+                await db.SaveChangesAsync();
+                Toast.ShowSuccess($"Removed {assignment.Role} from {assignment.Principal}.");
+
+                await using var db2 = await DbFactory.CreateDbContextAsync();
+                await LoadAssignmentsAsync(db2);
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.ShowError($"Remove failed: {ex.Message}");
+        }
+    }
+
+    private static Appearance RoleBadgeAppearance(CollectionRole role) => role switch
+    {
+        CollectionRole.Admin    => Appearance.Accent,
+        CollectionRole.Uploader => Appearance.Neutral,
+        CollectionRole.Download => Appearance.Outline,
+        CollectionRole.Preview  => Appearance.Lightweight,
+        _                       => Appearance.Neutral
+    };
+}

@@ -1,0 +1,22 @@
+@namespace Catalog3d.Web.Blazor.Admin.Shared
+@inject NavigationManager Navigation
+@inject IConfiguration Configuration
+
+@* Redirects unauthenticated users to the appropriate login page.
+   Dev scheme: /login/dev (local page implemented by the dev-login agent).
+   OIDC scheme: /challenge (ASP.NET Core challenge → Authelia redirect).
+   This component is used by App.razor's <NotAuthorized> block. *@
+
+@code {
+    protected override void OnInitialized()
+    {
+        var provider = Configuration["Auth:Provider"] ?? "Dev";
+        var loginPath = provider.Equals("Oidc", StringComparison.OrdinalIgnoreCase)
+            ? "/challenge"
+            : "/login/dev";
+
+        // returnUrl lets the login page redirect back after sign-in.
+        var returnUrl = Uri.EscapeDataString(Navigation.ToBaseRelativePath(Navigation.Uri));
+        Navigation.NavigateTo($"{loginPath}?returnUrl=/{returnUrl}", forceLoad: true);
+    }
+}

@@ -17,7 +17,7 @@ namespace Catalog3d.Infrastructure.Auth;
 public sealed class DevAuthHandler : AuthenticationHandler<DevAuthSchemeOptions>
 {
     // Claim type for group membership — matches the standard OIDC "groups" claim.
-    internal const string GroupsClaimType = "groups";
+    public const string GroupsClaimType = "groups";
 
     public DevAuthHandler(
         IOptionsMonitor<DevAuthSchemeOptions> options,

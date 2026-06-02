@@ -1,0 +1,109 @@
+@page "/login/dev"
+@namespace Catalog3d.Web.Blazor.Admin.Pages
+@inject IConfiguration Configuration
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthStateProvider
+
+@* Dev sign-in page — only active when Auth:Provider = Dev.
+   In OIDC mode, RedirectToLogin sends unauthenticated users to /challenge, not here;
+   this page shows a redirect link if reached with OIDC active.
+
+   The form POSTs to /auth/dev-login (DevLoginEndpoints). We use a plain native HTML
+   form + <select> so the submit works on the static pre-render pass before the Blazor
+   circuit is connected — FluentSelect renders as a custom element and its value is not
+   included in a native form POST. *@
+
+@if (_isOidc)
+{
+    <PageTitle>Sign In — catalog-3d</PageTitle>
+    <FluentLabel Typo="Typography.H4">Sign In</FluentLabel>
+    <p>OIDC mode is active. <FluentAnchor Href="/challenge">Sign in with Authelia</FluentAnchor></p>
+}
+else
+{
+    <PageTitle>Sign In (Dev) — catalog-3d</PageTitle>
+
+    <div class="login-card">
+        <FluentLabel Typo="Typography.H4">Developer Sign In</FluentLabel>
+        <p class="login-hint">Select a dev user from <code>DevUsers:Users</code> to establish a session cookie.</p>
+
+        @if (_errorMessage is not null)
+        {
+            <FluentMessageBar Intent="MessageIntent.Error">@_errorMessage</FluentMessageBar>
+        }
+
+        @if (_devUsers.Count == 0)
+        {
+            <FluentMessageBar Intent="MessageIntent.Warning">
+                No dev users configured in <code>DevUsers:Users</code>.
+            </FluentMessageBar>
+        }
+        else
+        {
+            @* Plain HTML form so submission works before the Blazor circuit is active.
+               Native <select> posts the selected option value as the form field. *@
+            <form method="post" action="/auth/dev-login">
+                <input type="hidden" name="returnUrl" value="@_returnUrl" />
+
+                <div class="field-row">
+                    <label for="dev-user-select" class="field-label">Sign in as</label>
+                    <select id="dev-user-select" name="username" class="dev-select">
+                        @foreach (var user in _devUsers)
+                        {
+                            <option value="@user.Key">@user.Value (@user.Key)</option>
+                        }
+                    </select>
+                </div>
+
+                @* Native submit button — web component buttons do not reliably trigger
+                   native HTML form submission in all browsers. Style matches Fluent accent. *@
+                <button type="submit" class="signin-btn">Sign In</button>
+            </form>
+        }
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "returnUrl")]
+    public string? ReturnUrl { get; set; }
+
+    [SupplyParameterFromQuery(Name = "error")]
+    public string? Error { get; set; }
+
+    private bool _isOidc;
+    private string _returnUrl = "/";
+    private string? _errorMessage;
+
+    // Key = username, Value = display name
+    private Dictionary<string, string> _devUsers = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var provider = Configuration["Auth:Provider"] ?? "Dev";
+        _isOidc = provider.Equals("Oidc", StringComparison.OrdinalIgnoreCase);
+
+        if (_isOidc)
+            return;
+
+        // Redirect away if already authenticated.
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (authState.User.Identity?.IsAuthenticated is true)
+        {
+            Nav.NavigateTo("/");
+            return;
+        }
+
+        _returnUrl = !string.IsNullOrEmpty(ReturnUrl) ? ReturnUrl : "/";
+
+        if (Error is not null)
+            _errorMessage = "Unknown username. Select a configured dev user and try again.";
+
+        // Read users from config — DevUsers:Users is keyed by username.
+        var usersSection = Configuration.GetSection("DevUsers:Users");
+        foreach (var child in usersSection.GetChildren())
+        {
+            var displayName = child["DisplayName"] ?? child.Key;
+            _devUsers[child.Key] = displayName;
+        }
+    }
+}

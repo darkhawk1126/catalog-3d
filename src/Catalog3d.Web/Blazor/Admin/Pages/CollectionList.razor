@@ -1,0 +1,205 @@
+@page "/collections"
+@namespace Catalog3d.Web.Blazor.Admin.Pages
+@attribute [Authorize]
+
+<PageTitle>Collections — catalog-3d</PageTitle>
+
+@if (_loading)
+{
+    <FluentProgressRing />
+}
+else
+{
+    <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" Style="margin-bottom: 1rem;">
+        <FluentLabel Typo="Typography.H4" Style="flex: 1;">Collections</FluentLabel>
+        @if (_isSiteAdmin)
+        {
+            <FluentButton Appearance="Appearance.Accent"
+                          IconStart="@(new Size20.Add())"
+                          OnClick="@(() => Nav.NavigateTo("/collections/new"))">
+                New Collection
+            </FluentButton>
+        }
+    </FluentStack>
+
+    @if (_collections.Count == 0)
+    {
+        <FluentLabel>No collections found.</FluentLabel>
+    }
+    else
+    {
+        <FluentDataGrid Items="@_collections.AsQueryable()"
+                        GridTemplateColumns="1fr 1fr auto auto auto"
+                        TGridItem="CollectionRow">
+            <PropertyColumn Title="Name" Property="@(r => r.Name)" Sortable="true" />
+            <PropertyColumn Title="Slug" Property="@(r => r.Slug)" Sortable="true" />
+            <PropertyColumn Title="Models" Property="@(r => r.ModelCount)" Align="Align.End" />
+            <TemplateColumn Title="Your Role">
+                <FluentBadge Appearance="Appearance.Neutral">@(context.EffectiveRole?.ToString() ?? "—")</FluentBadge>
+            </TemplateColumn>
+            <TemplateColumn Title="">
+                <FluentStack Orientation="Orientation.Horizontal">
+                    <FluentAnchor Href="@($"/collections/{context.Slug}")" Appearance="Appearance.Hypertext">View</FluentAnchor>
+                    @if (context.EffectiveRole >= CollectionRole.Admin)
+                    {
+                        <FluentAnchor Href="@($"/collections/{context.Slug}/edit")" Appearance="Appearance.Hypertext">Edit</FluentAnchor>
+                        <FluentButton IconStart="@(new Size20.Delete())"
+                                      Appearance="Appearance.Stealth"
+                                      Title="Delete collection"
+                                      OnClick="@(() => ConfirmDeleteAsync(context.Id, context.Name))">
+                        </FluentButton>
+                    }
+                </FluentStack>
+            </TemplateColumn>
+        </FluentDataGrid>
+    }
+}
+
+@code {
+    [Inject] AdminAuthHelper AuthHelper { get; set; } = null!;
+    [Inject] IDbContextFactory<CatalogDbContext> DbFactory { get; set; } = null!;
+    [Inject] NavigationManager Nav { get; set; } = null!;
+    [Inject] IToastService Toast { get; set; } = null!;
+    [Inject] IDialogService Dialog { get; set; } = null!;
+
+    private bool _loading = true;
+    private bool _isSiteAdmin;
+    private List<CollectionRow> _collections = new();
+
+    private sealed record CollectionRow(
+        Guid Id,
+        string Name,
+        string Slug,
+        int ModelCount,
+        CollectionRole? EffectiveRole);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthHelper.InitializeAsync();
+        _isSiteAdmin = AuthHelper.IsSiteAdmin();
+        await LoadCollectionsAsync();
+        _loading = false;
+    }
+
+    private async Task LoadCollectionsAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        // Determine visible collection IDs without round-tripping through HTTP.
+        List<Guid> visibleIds;
+        if (_isSiteAdmin)
+        {
+            visibleIds = await db.Collections.AsNoTracking().Select(c => c.Id).ToListAsync();
+        }
+        else
+        {
+            // Build principal set from the ClaimsPrincipal (userId + group:name entries).
+            var principals = BuildPrincipalSet();
+            visibleIds = principals.Count == 0
+                ? new List<Guid>()
+                : await db.RoleAssignments
+                      .AsNoTracking()
+                      .Where(r => principals.Contains(r.Principal))
+                      .Select(r => r.CollectionId)
+                      .Distinct()
+                      .ToListAsync();
+        }
+
+        if (visibleIds.Count == 0)
+        {
+            _collections = new List<CollectionRow>();
+            return;
+        }
+
+        var rawCollections = await db.Collections
+            .AsNoTracking()
+            .Where(c => visibleIds.Contains(c.Id))
+            .OrderBy(c => c.Name)
+            .ToListAsync();
+
+        var countDict = await db.Models
+            .AsNoTracking()
+            .Where(m => visibleIds.Contains(m.CollectionId))
+            .GroupBy(m => m.CollectionId)
+            .Select(g => new { CollectionId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.CollectionId, x => x.Count);
+
+        // Resolve effective role per collection — AdminAuthHelper uses the circuit-scoped
+        // ICollectionAuthorizationService (not the factory context) so mixing is safe.
+        var rows = new List<CollectionRow>(rawCollections.Count);
+        foreach (var c in rawCollections)
+        {
+            CollectionRole? role;
+            if (_isSiteAdmin)
+            {
+                role = CollectionRole.Admin;
+            }
+            else
+            {
+                role = await ResolveRoleAsync(c.Id);
+            }
+            countDict.TryGetValue(c.Id, out var count);
+            rows.Add(new CollectionRow(c.Id, c.Name, c.Slug, count, role));
+        }
+
+        _collections = rows;
+    }
+
+    // Build the principals set that matches RoleAssignment.Principal conventions:
+    //   user:<sub> for users, group:<name> for groups.
+    private List<string> BuildPrincipalSet()
+    {
+        var user = AuthHelper.User;
+        if (user is null) return new List<string>();
+
+        var list = new List<string>();
+        var userId = AuthHelper.UserId;
+        if (!string.IsNullOrEmpty(userId))
+            list.Add(userId);
+
+        foreach (var claim in user.FindAll("groups"))
+            list.Add($"group:{claim.Value}");
+
+        return list;
+    }
+
+    // Walk role levels high-to-low; stops at first match to avoid excess DB calls.
+    private async Task<CollectionRole?> ResolveRoleAsync(Guid collectionId)
+    {
+        if (await AuthHelper.HasCollectionRoleAsync(collectionId, CollectionRole.Admin)) return CollectionRole.Admin;
+        if (await AuthHelper.HasCollectionRoleAsync(collectionId, CollectionRole.Uploader)) return CollectionRole.Uploader;
+        if (await AuthHelper.HasCollectionRoleAsync(collectionId, CollectionRole.Download)) return CollectionRole.Download;
+        if (await AuthHelper.HasCollectionRoleAsync(collectionId, CollectionRole.Preview)) return CollectionRole.Preview;
+        return null;
+    }
+
+    private async Task ConfirmDeleteAsync(Guid collectionId, string collectionName)
+    {
+        var dialogRef = await Dialog.ShowConfirmationAsync(
+            $"Permanently delete collection \"{collectionName}\" and all its models?",
+            primaryText: "Delete",
+            secondaryText: "Cancel",
+            title: "Confirm Delete");
+
+        var result = await dialogRef.Result;
+        if (result.Cancelled) return;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.Collections.FindAsync(collectionId);
+            if (entity is not null)
+            {
+                db.Collections.Remove(entity);
+                await db.SaveChangesAsync();
+            }
+            Toast.ShowSuccess($"Collection \"{collectionName}\" deleted.");
+            await LoadCollectionsAsync();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Toast.ShowError($"Delete failed: {ex.Message}");
+        }
+    }
+}

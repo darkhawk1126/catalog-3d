@@ -1,0 +1,23 @@
+@namespace Catalog3d.Web.Blazor.Admin.Shared
+
+@* App-bar header component. Shows app title on the left, current user on the right. *@
+
+<FluentStack Orientation="Orientation.Horizontal"
+             HorizontalAlignment="HorizontalAlignment.SpaceBetween"
+             VerticalAlignment="VerticalAlignment.Center"
+             Style="width: 100%; padding: 0 1rem;">
+    <FluentLabel Typo="Typography.H6" Style="color: var(--neutral-foreground-rest);">
+        catalog-3d admin
+    </FluentLabel>
+
+    <AuthorizeView>
+        <Authorized>
+            <FluentLabel Typo="Typography.Body" Style="color: var(--neutral-foreground-rest);">
+                @context.User.Identity?.Name
+            </FluentLabel>
+        </Authorized>
+        <NotAuthorized>
+            <FluentAnchor Href="/login/dev">Sign in</FluentAnchor>
+        </NotAuthorized>
+    </AuthorizeView>
+</FluentStack>

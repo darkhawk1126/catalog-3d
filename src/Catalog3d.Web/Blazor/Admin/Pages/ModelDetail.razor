@@ -1,0 +1,337 @@
+@page "/models/{Slug}"
+@namespace Catalog3d.Web.Blazor.Admin.Pages
+@attribute [Authorize]
+
+<PageTitle>@(_model?.Name ?? Slug) — catalog-3d</PageTitle>
+
+@if (_loading)
+{
+    <FluentProgressRing />
+}
+else if (_model is null)
+{
+    <FluentMessageBar Intent="MessageIntent.Error">Model not found or you do not have access.</FluentMessageBar>
+}
+else
+{
+    <FluentStack Orientation="Orientation.Vertical" VerticalGap="24">
+
+        @* Header row: back link + title + admin actions *@
+        <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" HorizontalGap="12">
+            <FluentAnchor Href="@($"/collections/{_collection?.Slug}")" Appearance="Appearance.Hypertext">
+                &larr; @(_collection?.Name ?? "Collection")
+            </FluentAnchor>
+        </FluentStack>
+
+        <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" HorizontalGap="16">
+            <FluentLabel Typo="Typography.H4" Style="flex: 1;">@_model.Name</FluentLabel>
+
+            @if (_isAdmin)
+            {
+                <FluentButton Appearance="Appearance.Outline"
+                              IconStart="@(new Size16.ArrowSync())"
+                              Loading="@_retriggering"
+                              Disabled="@_retriggering"
+                              OnClick="@RetriggerRenderAsync">
+                    Re-render
+                </FluentButton>
+                <FluentButton Appearance="Appearance.Outline"
+                              IconStart="@(new Size16.Delete())"
+                              Disabled="@_deleting"
+                              Loading="@_deleting"
+                              OnClick="@DeleteModelAsync">
+                    Delete
+                </FluentButton>
+            }
+        </FluentStack>
+
+        @* Two-column layout: thumbnail + metadata sidebar *@
+        <FluentGrid>
+            <FluentGridItem xs="12" sm="4">
+                @* Thumbnail — Preview-gated via <img> pointing at the authenticated endpoint *@
+                @if (_thumbnailAvailable)
+                {
+                    <img src="/api/v1/models/@Slug/thumbnail"
+                         alt="@_model.Name thumbnail"
+                         style="width: 100%; border-radius: var(--control-corner-radius); border: 1px solid var(--neutral-stroke-rest);" />
+                }
+                else
+                {
+                    <FluentStack Orientation="Orientation.Vertical"
+                                 HorizontalAlignment="HorizontalAlignment.Center"
+                                 Style="padding: 40px; border: 1px solid var(--neutral-stroke-rest); border-radius: var(--control-corner-radius); background: var(--neutral-fill-secondary-rest);">
+                        <FluentIcon Value="@(new Size48.Cube())" Color="Color.Neutral" />
+                        <FluentLabel Typo="Typography.Body" Style="color: var(--neutral-foreground-hint);">
+                            @(_model.Status == ModelStatus.Processing ? "Rendering thumbnail…" :
+                              _model.Status == ModelStatus.Failed ? "Render failed" : "No thumbnail")
+                        </FluentLabel>
+                    </FluentStack>
+                }
+
+                @* Viewer link — Download-gated, shown only to Download+ callers *@
+                @if (_canDownload && _stlFiles.Count > 0)
+                {
+                    <FluentStack Orientation="Orientation.Vertical" VerticalGap="8" Style="margin-top: 12px;">
+                        @foreach (var stl in _stlFiles)
+                        {
+                            <FluentAnchor Href="@($"/viewer/{stl.Id}")"
+                                          Target="_blank"
+                                          Appearance="Appearance.Accent">
+                                <FluentIcon Value="@(new Size20.CubeMultiple())" Style="margin-right: 6px;" />
+                                Open 3D viewer
+                            </FluentAnchor>
+                        }
+                    </FluentStack>
+                }
+            </FluentGridItem>
+
+            <FluentGridItem xs="12" sm="8">
+                <FluentStack Orientation="Orientation.Vertical" VerticalGap="16">
+
+                    @* Model metadata *@
+                    <FluentCard>
+                        <FluentStack Orientation="Orientation.Vertical" VerticalGap="12" Style="padding: 4px;">
+                            <div>
+                                <FluentLabel Typo="Typography.Body" Style="font-weight: 600;">Description</FluentLabel>
+                                <FluentLabel Typo="Typography.Body">
+                                    @(string.IsNullOrWhiteSpace(_model.Description) ? "—" : _model.Description)
+                                </FluentLabel>
+                            </div>
+                            <div>
+                                <FluentLabel Typo="Typography.Body" Style="font-weight: 600;">Status</FluentLabel>
+                                <FluentBadge Appearance="@ModelStatusAppearance(_model.Status)">
+                                    @_model.Status
+                                </FluentBadge>
+                            </div>
+                            <div>
+                                <FluentLabel Typo="Typography.Body" Style="font-weight: 600;">Owner</FluentLabel>
+                                <FluentLabel Typo="Typography.Body">@_model.Owner</FluentLabel>
+                            </div>
+                            <div>
+                                <FluentLabel Typo="Typography.Body" Style="font-weight: 600;">Slug</FluentLabel>
+                                <code>@_model.Slug</code>
+                            </div>
+                            <div>
+                                <FluentLabel Typo="Typography.Body" Style="font-weight: 600;">Uploaded</FluentLabel>
+                                <FluentLabel Typo="Typography.Body">@_model.CreatedAt.ToLocalTime().ToString("g")</FluentLabel>
+                            </div>
+                        </FluentStack>
+                    </FluentCard>
+
+                    @* File list — Download-gated geometry info *@
+                    @if (_canDownload && _stlFiles.Count > 0)
+                    {
+                        <FluentLabel Typo="Typography.H6">Files</FluentLabel>
+                        <FluentDataGrid Items="@_stlFiles.AsQueryable()" TGridItem="Catalog3d.Domain.Entities.ModelFile">
+                            <TemplateColumn Title="File ID">
+                                <code style="font-size: 0.75em;">@context.Id.ToString("D")[..8]…</code>
+                            </TemplateColumn>
+                            <TemplateColumn Title="Size">
+                                @FormatSize(context.Size)
+                            </TemplateColumn>
+                            <TemplateColumn Title="Triangles">
+                                @(context.TriCount.HasValue ? context.TriCount.Value.ToString("N0") : "—")
+                            </TemplateColumn>
+                            <TemplateColumn Title="Bounding box">
+                                @(string.IsNullOrEmpty(context.BoundingBox) ? "—" : context.BoundingBox)
+                            </TemplateColumn>
+                            <TemplateColumn Title="Render">
+                                <FluentBadge Appearance="@FileRenderAppearance(context.RenderStatus)">
+                                    @context.RenderStatus
+                                </FluentBadge>
+                            </TemplateColumn>
+                            <TemplateColumn Title="">
+                                <FluentAnchor Href="@($"/api/v1/models/files/{context.Id}")"
+                                              Target="_blank"
+                                              Appearance="Appearance.Hypertext">
+                                    Download
+                                </FluentAnchor>
+                            </TemplateColumn>
+                        </FluentDataGrid>
+                    }
+                    else if (!_canDownload)
+                    {
+                        <FluentMessageBar Intent="MessageIntent.Warning">
+                            File details and downloads require Download access.
+                        </FluentMessageBar>
+                    }
+
+                </FluentStack>
+            </FluentGridItem>
+        </FluentGrid>
+
+    </FluentStack>
+}
+
+@code {
+    [Parameter] public string Slug { get; set; } = string.Empty;
+
+    [Inject] AdminAuthHelper AuthHelper { get; set; } = null!;
+    [Inject] IDbContextFactory<CatalogDbContext> DbFactory { get; set; } = null!;
+    [Inject] NavigationManager Nav { get; set; } = null!;
+    [Inject] IToastService Toast { get; set; } = null!;
+    [Inject] IDialogService Dialog { get; set; } = null!;
+    [Inject] IRenderQueue RenderQueue { get; set; } = null!;
+
+    // ---- page state ----
+    private Catalog3d.Domain.Entities.Model? _model;
+    private Catalog3d.Domain.Entities.Collection? _collection;
+    private List<Catalog3d.Domain.Entities.ModelFile> _stlFiles = new();
+    private bool _thumbnailAvailable;
+    private bool _loading = true;
+    private bool _isAdmin;
+    private bool _canDownload;
+
+    // ---- action state ----
+    private bool _retriggering;
+    private bool _deleting;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthHelper.InitializeAsync();
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        _model = await db.Models
+            .AsNoTracking()
+            .Include(m => m.Files)
+            .FirstOrDefaultAsync(m => m.Slug == Slug);
+
+        if (_model is null)
+        {
+            _loading = false;
+            return;
+        }
+
+        // Verify the caller has at least Preview on the collection (invisible = 404 behaviour).
+        bool hasPreview = await AuthHelper.HasCollectionRoleAsync(_model.CollectionId, CollectionRole.Preview);
+        if (!hasPreview)
+        {
+            // Treat as not found — same behaviour as the REST API.
+            _model = null;
+            _loading = false;
+            return;
+        }
+
+        _collection = await db.Collections
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == _model.CollectionId);
+
+        _canDownload = await AuthHelper.HasCollectionRoleAsync(_model.CollectionId, CollectionRole.Download);
+        _isAdmin     = await AuthHelper.IsCollectionAdminAsync(_model.CollectionId);
+
+        // STL files only — thumbnail is Preview-gated separately via the <img> src endpoint.
+        _stlFiles = _model.Files
+            .Where(f => f.Kind == Catalog3d.Domain.Entities.ModelFileKind.Stl)
+            .OrderBy(f => f.CreatedAt)
+            .ToList();
+
+        _thumbnailAvailable = _model.Files
+            .Any(f => f.Kind == Catalog3d.Domain.Entities.ModelFileKind.Thumbnail
+                   && f.RenderStatus == Catalog3d.Domain.Entities.RenderStatus.Complete);
+
+        _loading = false;
+    }
+
+    // ---- admin actions ----
+
+    private async Task RetriggerRenderAsync()
+    {
+        if (_model is null || _stlFiles.Count == 0) return;
+
+        _retriggering = true;
+        try
+        {
+            // Enqueue a new render job for each STL file. IRenderQueue handles dedup/idempotency.
+            foreach (var file in _stlFiles)
+            {
+                await RenderQueue.EnqueueAsync(file.Id);
+            }
+
+            // Reset model status to Processing so the UI reflects the re-queue.
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var model = await db.Models.FirstOrDefaultAsync(m => m.Id == _model.Id);
+            if (model is not null)
+            {
+                model.Status = ModelStatus.Processing;
+                model.UpdatedAt = DateTimeOffset.UtcNow;
+                await db.SaveChangesAsync();
+                // Reflect updated status in the local snapshot (class, not record — mutate directly).
+                _model.Status = ModelStatus.Processing;
+                _model.UpdatedAt = model.UpdatedAt;
+            }
+
+            Toast.ShowSuccess("Render job queued.");
+        }
+        catch (Exception ex)
+        {
+            Toast.ShowError($"Failed to enqueue render: {ex.Message}");
+        }
+        finally
+        {
+            _retriggering = false;
+        }
+    }
+
+    private async Task DeleteModelAsync()
+    {
+        if (_model is null) return;
+
+        var dialogRef = await Dialog.ShowConfirmationAsync(
+            $"Delete model '{_model.Name}'? This cannot be undone.",
+            primaryText: "Delete",
+            secondaryText: "Cancel",
+            title: "Confirm delete");
+
+        var result = await dialogRef.Result;
+        if (result.Cancelled) return;
+
+        _deleting = true;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var model = await db.Models
+                .Include(m => m.Files)
+                .FirstOrDefaultAsync(m => m.Id == _model.Id);
+
+            if (model is not null)
+            {
+                db.ModelFiles.RemoveRange(model.Files);
+                db.Models.Remove(model);
+                await db.SaveChangesAsync();
+            }
+
+            Toast.ShowSuccess($"Model '{_model.Name}' deleted.");
+            Nav.NavigateTo($"/collections/{_collection?.Slug ?? Slug}");
+        }
+        catch (Exception ex)
+        {
+            Toast.ShowError($"Delete failed: {ex.Message}");
+            _deleting = false;
+        }
+    }
+
+    // ---- formatting helpers ----
+
+    private static string FormatSize(long bytes) => bytes switch
+    {
+        >= 1_073_741_824 => $"{bytes / 1_073_741_824.0:F1} GB",
+        >= 1_048_576     => $"{bytes / 1_048_576.0:F1} MB",
+        >= 1_024         => $"{bytes / 1_024.0:F1} KB",
+        _                => $"{bytes} B",
+    };
+
+    private static Appearance ModelStatusAppearance(ModelStatus s) => s switch
+    {
+        ModelStatus.Ready      => Appearance.Accent,
+        ModelStatus.Failed     => Appearance.Lightweight,
+        _                      => Appearance.Neutral,
+    };
+
+    private static Appearance FileRenderAppearance(Catalog3d.Domain.Entities.RenderStatus s) => s switch
+    {
+        Catalog3d.Domain.Entities.RenderStatus.Complete   => Appearance.Accent,
+        Catalog3d.Domain.Entities.RenderStatus.Failed     => Appearance.Lightweight,
+        _                                                  => Appearance.Neutral,
+    };
+}

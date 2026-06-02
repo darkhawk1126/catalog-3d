@@ -1,0 +1,52 @@
+# docker-compose.dev.yml — Dev-auth override for UI development
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# What this changes vs the base compose file:
+#   - Sets Auth:Provider=Dev (cookie-based dev sign-in at /login/dev, no Authelia needed)
+#   - Drops the Authelia dependency from the app container's `depends_on` list
+#   - Removes all OIDC environment variables from the app container
+#   - Assigns Authelia to the "oidc" profile, so it does not start without
+#     explicit --profile oidc (works in Docker Compose v2.22+ / Docker Desktop 4.22+)
+#   - Sets Authorization:SiteAdminGroups to match the "admin" dev user's groups
+#   - Leaves postgres and render-sidecar untouched
+#
+# The "admin" dev user (DevUsers:Users:admin) belongs to group "catalog-admins".
+# By default, SiteAdminGroups = ["admins"] — which won't match "catalog-admins".
+# This override aligns SiteAdminGroups with the dev user's groups so the "admin"
+# dev user gets site-admin access without editing appsettings.json.
+#
+# To add a dev user or change groups, edit DevUsers:Users in appsettings.json
+# and restart the app container: docker compose -f docker-compose.yml -f docker-compose.dev.yml restart app
+
+services:
+  app:
+    environment:
+      Auth__Provider: Dev
+      # Clear OIDC settings — DevAuth does not need them.
+      Oidc__Authority: ""
+      Oidc__ClientId: ""
+      Oidc__ClientSecret: ""
+      # Align SiteAdminGroups with the "admin" dev user's group (catalog-admins).
+      # The base compose sets this to "admins" for OIDC mode.
+      Authorization__SiteAdminGroups__0: catalog-admins
+      # SSL_CERT_FILE was for Authelia's self-signed TLS backchannel — not needed in dev mode.
+      SSL_CERT_FILE: ""
+    # Drop Authelia dependency so `docker compose up` doesn't wait for Authelia to be healthy.
+    # `!override` forces replacement of the base depends_on map — without it, Compose MERGES
+    # the maps and the base's `authelia` dependency survives, pointing at a now-profile-gated
+    # service and producing "undefined service authelia". Requires Docker Compose v2.24+.
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      render-sidecar:
+        condition: service_healthy
+
+  # Assign Authelia to the "oidc" profile so it only starts when explicitly requested.
+  # With this override in place, plain `docker compose up` starts postgres + render-sidecar + app
+  # but NOT Authelia. To run the full OIDC stack:
+  #   docker compose -f docker-compose.yml up   (no dev override — uses Authelia as usual)
+  authelia:
+    profiles:
+      - oidc

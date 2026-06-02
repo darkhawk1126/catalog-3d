@@ -1,0 +1,351 @@
+@page "/collections/{Slug}/upload"
+@namespace Catalog3d.Web.Blazor.Admin.Pages
+@attribute [Authorize]
+@implements IDisposable
+
+<PageTitle>Upload — @_collectionName — catalog-3d</PageTitle>
+
+@if (_loading)
+{
+    <FluentProgressRing />
+}
+else if (_collection is null)
+{
+    <FluentMessageBar Intent="MessageIntent.Error">Collection not found.</FluentMessageBar>
+}
+else if (!_canUpload)
+{
+    <FluentMessageBar Intent="MessageIntent.Error">You do not have Uploader access to this collection.</FluentMessageBar>
+}
+else
+{
+    <FluentStack Orientation="Orientation.Vertical" VerticalGap="20">
+
+        <FluentLabel Typo="Typography.H4">Upload to @_collection.Name</FluentLabel>
+
+        @* Upload form *@
+        <FluentCard Style="max-width: 640px; padding: 20px;">
+            <FluentStack Orientation="Orientation.Vertical" VerticalGap="16">
+
+                <FluentTextField @bind-Value="_modelName"
+                                 Label="Model name"
+                                 Placeholder="Leave blank to use the filename"
+                                 Style="width: 100%;" />
+
+                <FluentTextField @bind-Value="_modelDescription"
+                                 Label="Description"
+                                 Placeholder="Optional"
+                                 Style="width: 100%;" />
+
+                <div>
+                    <FluentLabel>STL file (.stl)</FluentLabel>
+                    <FluentInputFile id="fileUpload"
+                                     AnchorId="uploadBtn"
+                                     Mode="InputFileMode.Stream"
+                                     Accept=".stl,model/stl,application/octet-stream"
+                                     Multiple="false"
+                                     MaximumFileSize="@(512L * 1024 * 1024)"
+                                     @bind-ProgressPercent="@_progressPercent"
+                                     OnFileUploaded="@OnFileUploadedAsync"
+                                     OnCompleted="@OnUploadCompletedAsync"
+                                     Disabled="@_uploading"
+                                     DragDropZoneVisible="true">
+                        <ChildContent>
+                            <FluentStack Orientation="Orientation.Vertical"
+                                        HorizontalAlignment="HorizontalAlignment.Center"
+                                        Style="padding: 24px; border: 2px dashed var(--neutral-stroke-rest); border-radius: var(--control-corner-radius); cursor: pointer;">
+                                <FluentIcon Value="@(new Size24.ArrowUpload())" Color="Color.Accent" />
+                                <FluentLabel>Drag and drop an STL file here, or click to browse</FluentLabel>
+                                <FluentLabel Typo="Typography.Body" Style="color: var(--neutral-foreground-hint);">Maximum 512 MB</FluentLabel>
+                            </FluentStack>
+                        </ChildContent>
+                    </FluentInputFile>
+                </div>
+
+                @if (_uploading)
+                {
+                    <FluentStack Orientation="Orientation.Vertical" VerticalGap="8">
+                        <FluentProgress Min="0" Max="100" Value="@_progressPercent" />
+                        <FluentLabel Typo="Typography.Body">@_statusMessage</FluentLabel>
+                    </FluentStack>
+                }
+
+                @if (_uploadError is not null)
+                {
+                    <FluentMessageBar Intent="MessageIntent.Error">@_uploadError</FluentMessageBar>
+                }
+
+                <FluentButton Id="uploadBtn"
+                              Appearance="Appearance.Accent"
+                              Loading="@_uploading"
+                              Disabled="@_uploading">
+                    @(_uploading ? "Uploading…" : "Select & Upload File")
+                </FluentButton>
+
+            </FluentStack>
+        </FluentCard>
+
+        @* Uploaded models with render-status polling *@
+        @if (_uploads.Count > 0)
+        {
+            <FluentLabel Typo="Typography.H5">Uploaded this session</FluentLabel>
+
+            <FluentDataGrid Items="@_uploads.AsQueryable()" TGridItem="UploadedEntry" Style="max-width: 860px;">
+                <PropertyColumn Title="Model" Property="@(e => e.ModelName)" />
+                <PropertyColumn Title="File" Property="@(e => e.FileName)" />
+                <TemplateColumn Title="Status">
+                    <FluentBadge Appearance="@StatusAppearance(context.RenderStatus)">
+                        @context.RenderStatus
+                    </FluentBadge>
+                </TemplateColumn>
+                <TemplateColumn Title="">
+                    <FluentAnchor Href="@($"/models/{context.ModelSlug}")" Appearance="Appearance.Hypertext">View</FluentAnchor>
+                </TemplateColumn>
+            </FluentDataGrid>
+        }
+
+    </FluentStack>
+}
+
+@code {
+    [Parameter] public string Slug { get; set; } = string.Empty;
+
+    [Inject] AdminAuthHelper AuthHelper { get; set; } = null!;
+    [Inject] IDbContextFactory<CatalogDbContext> DbFactory { get; set; } = null!;
+    [Inject] NavigationManager Nav { get; set; } = null!;
+    [Inject] IToastService Toast { get; set; } = null!;
+    [Inject] IHttpClientFactory HttpClientFactory { get; set; } = null!;
+
+    // ---- page state ----
+    private Catalog3d.Domain.Entities.Collection? _collection;
+    private string _collectionName = string.Empty;
+    private bool _loading = true;
+    private bool _canUpload;
+
+    // ---- form state ----
+    private string _modelName = string.Empty;
+    private string _modelDescription = string.Empty;
+
+    // ---- upload state ----
+    private bool _uploading;
+    private int _progressPercent;
+    private string _statusMessage = string.Empty;
+    private string? _uploadError;
+
+    // ---- poll state ----
+    private readonly List<UploadedEntry> _uploads = new();
+    private CancellationTokenSource _pollCts = new();
+    private Task? _pollTask;
+
+    // ---- lifecycle ----
+
+    protected override async Task OnInitializedAsync()
+    {
+        await AuthHelper.InitializeAsync();
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _collection = await db.Collections
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Slug == Slug);
+
+        if (_collection is null)
+        {
+            _loading = false;
+            return;
+        }
+
+        _collectionName = _collection.Name;
+        _canUpload = await AuthHelper.HasCollectionRoleAsync(_collection.Id, CollectionRole.Uploader);
+        _loading = false;
+    }
+
+    // ---- upload handling ----
+
+    /// <summary>
+    /// Called by FluentInputFile once per file (Mode=Stream) with the open IBrowserFile stream.
+    /// We POST the stream as multipart/form-data to the REST endpoint so the server-side
+    /// streaming upload path (MultipartReader → IFileStore → IRenderQueue) handles the write.
+    /// This avoids double-buffering: the Blazor SignalR byte-channel IS the transfer, and
+    /// CopyToAsync from the browser stream feeds directly into the MultipartContent body.
+    /// </summary>
+    private async Task OnFileUploadedAsync(FluentInputFileEventArgs e)
+    {
+        if (e.Stream is null) return;
+
+        _uploading = true;
+        _uploadError = null;
+        _statusMessage = $"Uploading {e.Name}…";
+        StateHasChanged();
+
+        try
+        {
+            // Build multipart body. StreamContent wraps the IBrowserFile stream directly —
+            // no intermediate copy to memory. The HttpClient will read it on the fly.
+            using var form = new MultipartFormDataContent();
+
+            if (!string.IsNullOrWhiteSpace(_modelName))
+                form.Add(new StringContent(_modelName), "name");
+
+            if (!string.IsNullOrWhiteSpace(_modelDescription))
+                form.Add(new StringContent(_modelDescription), "description");
+
+            var streamContent = new StreamContent(e.Stream);
+            streamContent.Headers.ContentType =
+                new System.Net.Http.Headers.MediaTypeHeaderValue(
+                    string.IsNullOrEmpty(e.ContentType) ? "application/octet-stream" : e.ContentType);
+            form.Add(streamContent, "file", e.Name);
+
+            _statusMessage = "Sending to server…";
+            StateHasChanged();
+
+            // Use a named client targeting the same origin. IHttpClientFactory is registered
+            // by default by ASP.NET Core — no additional Program.cs registration needed.
+            // NavigationManager.BaseUri is the server's own origin, so this is an in-process
+            // HTTP call (loopback) that exercises the same REST endpoint external callers use.
+            using var http = HttpClientFactory.CreateClient();
+            http.BaseAddress = new Uri(Nav.BaseUri);
+
+            var url = $"api/v1/collections/{Uri.EscapeDataString(Slug)}/models";
+            using var response = await http.PostAsync(url, form);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<UploadResponse>();
+                if (result is not null)
+                {
+                    // Resolve the model slug so we can poll status and link to the detail page.
+                    await using var db = await DbFactory.CreateDbContextAsync();
+                    var model = await db.Models
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(m => m.Id == result.ModelId);
+
+                    var entry = new UploadedEntry
+                    {
+                        ModelId = result.ModelId,
+                        FileId = result.FileId,
+                        ModelName = !string.IsNullOrWhiteSpace(_modelName) ? _modelName : Path.GetFileNameWithoutExtension(e.Name),
+                        FileName = e.Name,
+                        ModelSlug = model?.Slug ?? string.Empty,
+                        RenderStatus = "Pending",
+                    };
+                    _uploads.Insert(0, entry);
+                    Toast.ShowSuccess($"'{entry.ModelName}' uploaded. Rendering thumbnail…");
+
+                    // Reset form fields for the next upload.
+                    _modelName = string.Empty;
+                    _modelDescription = string.Empty;
+
+                    // Kick the render-status poller if not already running.
+                    EnsurePollRunning();
+                }
+            }
+            else
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                _uploadError = $"Upload failed ({(int)response.StatusCode}): {body}";
+                Toast.ShowError(_uploadError);
+            }
+        }
+        catch (Exception ex)
+        {
+            _uploadError = $"Upload error: {ex.Message}";
+            Toast.ShowError(_uploadError);
+        }
+    }
+
+    private Task OnUploadCompletedAsync(IEnumerable<FluentInputFileEventArgs> _)
+    {
+        _uploading = false;
+        _progressPercent = 0;
+        _statusMessage = string.Empty;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    // ---- render-status polling ----
+
+    private void EnsurePollRunning()
+    {
+        if (_pollTask is { IsCompleted: false }) return;
+        _pollCts.Cancel();
+        _pollCts.Dispose();
+        _pollCts = new CancellationTokenSource();
+        _pollTask = PollRenderStatusAsync(_pollCts.Token);
+    }
+
+    private async Task PollRenderStatusAsync(CancellationToken ct)
+    {
+        // Poll every 3 seconds until all uploads are in a terminal state.
+        while (!ct.IsCancellationRequested)
+        {
+            await Task.Delay(3_000, ct).ConfigureAwait(false);
+
+            var pending = _uploads
+                .Where(e => e.RenderStatus is "Pending" or "Processing")
+                .ToList();
+
+            if (pending.Count == 0) break;
+
+            try
+            {
+                await using var db = await DbFactory.CreateDbContextAsync(ct);
+
+                // Load the primary STL file's RenderStatus for each pending model.
+                var modelIds = pending.Select(e => e.ModelId).ToList();
+                var statuses = await db.ModelFiles
+                    .AsNoTracking()
+                    .Where(f => modelIds.Contains(f.ModelId) && f.Kind == Catalog3d.Domain.Entities.ModelFileKind.Stl)
+                    .Select(f => new { f.ModelId, f.RenderStatus })
+                    .ToListAsync(ct);
+
+                bool changed = false;
+                foreach (var s in statuses)
+                {
+                    var entry = _uploads.FirstOrDefault(e => e.ModelId == s.ModelId);
+                    if (entry is null) continue;
+                    var label = s.RenderStatus.ToString();
+                    if (entry.RenderStatus != label)
+                    {
+                        entry.RenderStatus = label;
+                        changed = true;
+                    }
+                }
+
+                if (changed)
+                    await InvokeAsync(StateHasChanged);
+            }
+            catch (OperationCanceledException) { break; }
+            catch { /* swallow transient DB errors during poll */ }
+        }
+    }
+
+    // ---- helpers ----
+
+    private static Appearance StatusAppearance(string status) => status switch
+    {
+        "Complete" => Appearance.Accent,
+        "Failed"   => Appearance.Lightweight,
+        _          => Appearance.Neutral,
+    };
+
+    public void Dispose()
+    {
+        _pollCts.Cancel();
+        _pollCts.Dispose();
+    }
+
+    // ---- local records ----
+
+    private sealed class UploadedEntry
+    {
+        public Guid ModelId { get; set; }
+        public Guid FileId { get; set; }
+        public string ModelName { get; set; } = string.Empty;
+        public string FileName { get; set; } = string.Empty;
+        public string ModelSlug { get; set; } = string.Empty;
+        public string RenderStatus { get; set; } = "Pending";
+    }
+
+    /// <summary>Wire shape matching UploadModelResponse from the REST endpoint.</summary>
+    private sealed record UploadResponse(Guid ModelId, Guid FileId, string BlobKey, long Size, string Sha256);
+}

@@ -1,0 +1,29 @@
+@inherits LayoutComponentBase
+@namespace Catalog3d.Web.Blazor.Admin
+
+@* FluentMainLayout provides the top-level chrome: header bar + collapsible nav + body area.
+   FluentToastProvider and FluentDialogProvider must be inside the layout so they are present
+   for every page. The providers are singletons on the Blazor circuit; placing them here
+   ensures a single instance for the entire admin SPA. *@
+
+<FluentMainLayout NavMenuTitle="catalog-3d" NavMenuWidth="220" HeaderHeight="50">
+    <Header>
+        <AdminHeader />
+    </Header>
+    <NavMenuContent>
+        <AdminNavMenu />
+    </NavMenuContent>
+    <Body>
+        <FluentToastProvider MaxToastCount="5" Position="ToastPosition.TopRight" />
+        <FluentDialogProvider />
+        <article class="content">
+            @Body
+        </article>
+    </Body>
+</FluentMainLayout>
+
+<FluentDesignTheme @bind-Mode="@_themeMode" StorageName="catalog3d-theme" />
+
+@code {
+    private DesignThemeModes _themeMode = DesignThemeModes.System;
+}
