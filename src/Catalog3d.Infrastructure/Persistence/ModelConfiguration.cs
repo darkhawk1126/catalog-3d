@@ -1,0 +1,64 @@
+using Catalog3d.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace Catalog3d.Infrastructure.Persistence;
+
+internal sealed class ModelConfiguration : IEntityTypeConfiguration<Model>
+{
+    public void Configure(EntityTypeBuilder<Model> builder)
+    {
+        builder.ToTable("models");
+
+        builder.HasKey(m => m.Id);
+        builder.Property(m => m.Id).HasColumnName("id");
+
+        builder.Property(m => m.CollectionId)
+            .HasColumnName("collection_id")
+            .IsRequired();
+
+        builder.Property(m => m.Slug)
+            .HasColumnName("slug")
+            .HasMaxLength(200)
+            .IsRequired();
+
+        builder.Property(m => m.Name)
+            .HasColumnName("name")
+            .HasMaxLength(500)
+            .IsRequired();
+
+        builder.Property(m => m.Description)
+            .HasColumnName("description")
+            .IsRequired();
+
+        builder.Property(m => m.Owner)
+            .HasColumnName("owner")
+            .HasMaxLength(500)
+            .IsRequired();
+
+        // Stored as string so schema reads without enum knowledge; ordinal sort on string is not needed.
+        builder.Property(m => m.Status)
+            .HasColumnName("status")
+            .HasConversion<string>()
+            .HasMaxLength(50)
+            .IsRequired();
+
+        builder.Property(m => m.CreatedAt)
+            .HasColumnName("created_at")
+            .IsRequired();
+
+        builder.Property(m => m.UpdatedAt)
+            .HasColumnName("updated_at")
+            .IsRequired();
+
+        // Slug uniqueness is scoped to the collection: two collections may each have a "base" model.
+        builder.HasIndex(m => new { m.CollectionId, m.Slug })
+            .IsUnique()
+            .HasDatabaseName("ix_models_collection_slug");
+
+        builder.HasMany(m => m.Files)
+            .WithOne(f => f.Model)
+            .HasForeignKey(f => f.ModelId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
