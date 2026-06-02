@@ -1,0 +1,141 @@
+---
+# Local Authelia 4.39.13 dev configuration for catalog-3d.
+# Mirrors prod claim shape: no claims_policy, groups delivered via UserInfo endpoint only.
+# Uses TLS (self-signed cert) because Authelia 4.39 requires https for session.cookies.authelia_url.
+# The app sets Oidc:RequireHttpsMetadata=false so it accepts the self-signed cert on the backend.
+# Browser users will see a cert warning on first visit to https://127.0.0.1:9091 — accept it once.
+
+theme: light
+
+server:
+  address: tcp://0.0.0.0:9091/
+  tls:
+    key: /config/tls.key
+    certificate: /config/tls.crt
+
+log:
+  level: info
+
+# 32-char dev-only secrets. Not sensitive — single-instance local only.
+identity_validation:
+  reset_password:
+    jwt_secret: "dev-jwt-secret-32bytes-paddddddd"
+
+session:
+  secret: "dev-session-secret-32bytes-paddd"
+  cookies:
+    - domain: 127.0.0.1
+      authelia_url: https://127.0.0.1:9091
+      name: authelia_session
+      expiration: 1h
+      inactivity: 5m
+
+storage:
+  encryption_key: "dev-storage-key-32bytes-padddddd"
+  local:
+    path: /config/db.sqlite3
+
+authentication_backend:
+  file:
+    path: /config/users_database.yml
+    password:
+      algorithm: argon2id
+      iterations: 3
+      parallelism: 4
+      memory: 65536
+      key_length: 32
+      salt_length: 16
+
+# Everyone through on one factor — catalog-3d owns its own authorization.
+access_control:
+  default_policy: one_factor
+
+notifier:
+  filesystem:
+    filename: /config/notification.txt
+
+identity_providers:
+  oidc:
+    hmac_secret: "dev-hmac-secret-32bytes-padddddd"
+    jwks:
+      - key_id: dev-rsa
+        algorithm: RS256
+        # PKCS#8 RSA private key generated for dev only. Committed to repo; not a secret.
+        key: |
+          -----BEGIN PRIVATE KEY-----
+          MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCpBOMHQIg2KPO9
+          pHbTxkFs/m3av+pBdtH3cr5wMkCV9qL/qfeCwYKtddys9uHQx5tp4816zvPbQekl
+          g/0ngBSXksPT/eD15YyMXVyLsrPFlMzc3DRK5I4P0ukebqa9HaW9N2VQbqTjrkA5
+          eq3Eyr1t9DQfn1vlkY5zJuhNuFbgVoZAN6UaOmRU4dcdLjrn2hMjWyByt2brpCGE
+          4F1WOPoVwkDi5MNEgNDlJt4uY6rP/mZY69/ZzTpeSu+U9vV3wbH8eu3R1z13ZRxL
+          QtKXw1sSPU7ieFsmplfKV67BbJ+9W7zmxcrv5lCttsFkLG75GBzMDFuvdeiso3v7
+          2aEYWtZ5AgMBAAECggEAAtpMZ83uB8P85cGF31e/uPKC+roRFbF92yzoMIYGUwrK
+          gBOeeI6muCHsa3HLTRGF+raOl7kL68S/c6XvFldyE9DZ6HCCZRZg6DK7xrdFATcl
+          lpwmAc0GCoV5gqiymAtofJYXxYefZ/xfW7RuO0I5U2tXnCmZHwwZvYysa+/32tdz
+          9j76pmxOUgMwmxlVvebHZtIPPep5R/QKrdZz55V+kfwDczEaDhvZaPiM5zFbb6lZ
+          9PCIl1pJb0d4yVwaCUu596iaLTyfnxt+V2Oz++DpypQsf58Am02Xt5PB8h6ZZkas
+          wZLXae2Vc8GF9s0zBlQfvxsdu8sSOUyceNMovXy9FQKBgQDmADpjd3D6c4NUOs4h
+          FK8YEdVFbZ1EdGkOikFP6b3TPqPhhHOjEWTVWuUMlmsOjgGp4eTMtdlzigJNwp+D
+          eteY2lOoPpAz2IpqiO/NErMVdaIXLdFMU1+mi0WuQDuosk/h2f3OwiZIyz2rfzea
+          ldDEfW72olq0RNas52eU4STMjwKBgQC8H/c65bb1S7YMhWsdRlXCU84MfI4jGCKx
+          eUB0iTgIcdA+0kNX/ip52I6vK1W7qZZEDS52DjnAlOzemII8M/wW1EJru7FMiM7r
+          adb8Oho74HU2GZuIW2mzUrLTzM96GOHThThuqPkj6KlJ7NIFuf/Qb0dnfFbgvRr8
+          1gsgdyRAdwKBgAjUcWloKHo0/RG6wDcc6CvwY1OrBaKfJXldbWx3+MWnXftGbnoQ
+          LOLT/n8hNzLz2LSA65vAT3zUC4qYsi8GBEjl+Ng4rqiO46F7aFljImTsgzCIncRk
+          XwOxzRcHeELdtZtiFxBc+8NHqjJvS98vaThh6GSnjvvkuKkiqSNaEWOZAoGAIf+U
+          6qwBOKuKJxElnpDLhucmYdNQzL7b5j8HiwgRfFU1UWUmjox8mLCueLHYOKYZZgsL
+          zoIbpdZESKY/QyoR8P5DUr0E+dPvsVPbapIFk7So+jH+jdIXdDUJ5IUrKeG9TkDR
+          Rg57mCXAEoAeJLLMrJqvyOALw2npqq/0KtXdU1kCgYADaJWv27eq3cuY8uBmi0+G
+          lvJY//Ke8OyP3xr8K4mt2hcc/5FU3ynmwECqTrje5M1Tmrjj2F7j0OED2E80phLA
+          n30OQZ/0QRfPi91jisQoTRBUcgtgca4nxQr2sckrWXRKP44ecLuUh2vNWbncbPYq
+          gTvG6yBriVcdErmqwE2AZQ==
+          -----END PRIVATE KEY-----
+        certificate_chain: |
+          -----BEGIN CERTIFICATE-----
+          MIIDDzCCAfegAwIBAgIUHaz4NJEQ6ZpaUumM5e171EkLgqwwDQYJKoZIhvcNAQEL
+          BQAwFzEVMBMGA1UEAwwMYXV0aGVsaWEtZGV2MB4XDTI2MDYwMjE5MzIyM1oXDTM2
+          MDUzMDE5MzIyM1owFzEVMBMGA1UEAwwMYXV0aGVsaWEtZGV2MIIBIjANBgkqhkiG
+          9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqQTjB0CINijzvaR208ZBbP5t2r/qQXbR93K+
+          cDJAlfai/6n3gsGCrXXcrPbh0MebaePNes7z20HpJYP9J4AUl5LD0/3g9eWMjF1c
+          i7KzxZTM3Nw0SuSOD9LpHm6mvR2lvTdlUG6k465AOXqtxMq9bfQ0H59b5ZGOcybo
+          TbhW4FaGQDelGjpkVOHXHS4659oTI1sgcrdm66QhhOBdVjj6FcJA4uTDRIDQ5Sbe
+          LmOqz/5mWOvf2c06XkrvlPb1d8Gx/Hrt0dc9d2UcS0LSl8NbEj1O4nhbJqZXyleu
+          wWyfvVu85sXK7+ZQrbbBZCxu+RgczAxbr3XorKN7+9mhGFrWeQIDAQABo1MwUTAd
+          BgNVHQ4EFgQUX8Tgv50yuVkma4R323iXSf1NkCswHwYDVR0jBBgwFoAUX8Tgv50y
+          uVkma4R323iXSf1NkCswDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOC
+          AQEAWghJN9aq66JiOWq8Yu+YafFBScTk9+Xazpev+q/axbS3DjlxLBzuYFTs9brM
+          9LccweDOXnKwpOmxIzW6ZOtguOuT5KDg7Oo2p15Jvd8Zt1fQmXnuugsKVZv1us6h
+          MRTVvp4Ayyrrz4x1/qpVEGHtDdRdEFbeVafmU044cZjCTY0m8gWoRzrrSfrAA+8I
+          uzUvbFl1WW1E754okcfRVw7sV6sWJbHxaMrj5JU0SXWNjhT4ouayZYg2UrWPxV8g
+          UqdhbLTczuoBcLGNz+Q1K/9gNaF5JmNgpwdoyo5jfSsp7t5uaMBaRpbG+KSzlNU2
+          R/2bXxP6Ys24d+pxtWOln0iAvg==
+          -----END CERTIFICATE-----
+
+    clients:
+      - client_id: catalog-3d
+        client_name: "catalog-3d (dev)"
+        # argon2id hash of plaintext "catalog-dev-secret"
+        # Plaintext is set in docker-compose via OIDC__ClientSecret.
+        client_secret: "$argon2id$v=19$m=65536,t=3,p=4$iWoBK7UYiYkCKIMpVdLuPw$BPfRkSzzjRw+U8viRfbqhBSPmjMx0lCXq07AAfbYeSo"
+        public: false
+        require_pkce: true
+        pkce_challenge_method: S256
+        token_endpoint_auth_method: client_secret_post
+        authorization_policy: one_factor
+        # No claims_policy: groups are NOT embedded in the ID token.
+        # The ASP.NET Core OIDC handler must use GetClaimsFromUserInfoEndpoint=true.
+        # This mirrors prod exactly.
+        scopes:
+          - openid
+          - profile
+          - email
+          - groups
+          - offline_access
+        grant_types:
+          - authorization_code
+          - refresh_token
+        response_types:
+          - code
+        redirect_uris:
+          - http://127.0.0.1:5036/signin-oidc
+        # userinfo_signed_response_alg omitted: plain JSON UserInfo response (default = none).

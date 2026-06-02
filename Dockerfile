@@ -23,9 +23,9 @@ RUN dotnet publish src/Catalog3d.Web/Catalog3d.Web.csproj \
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
-# Non-root user for security
-RUN addgroup --system --gid 1001 catalog3d \
- && adduser  --system --uid 1001 --ingroup catalog3d catalog3d
+# Non-root user for security (Debian-compatible commands; aspnet:10.0 is Bookworm-based)
+RUN groupadd --system --gid 1001 catalog3d \
+ && useradd  --system --uid 1001 --gid catalog3d --no-create-home catalog3d
 
 COPY --from=build /app/publish .
 

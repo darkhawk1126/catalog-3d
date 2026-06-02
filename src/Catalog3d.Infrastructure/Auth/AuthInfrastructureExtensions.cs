@@ -22,6 +22,18 @@ public static class AuthInfrastructureExtensions
     }
 
     /// <summary>
+    /// Registers the OIDC-backed IUserContext.
+    /// Reads ClaimsPrincipal populated by the OpenIdConnect handler.
+    /// Call when Auth:Provider = Oidc.
+    /// </summary>
+    public static IServiceCollection AddOidcUserContext(this IServiceCollection services)
+    {
+        services.AddHttpContextAccessor();
+        services.AddScoped<IUserContext, OidcUserContext>();
+        return services;
+    }
+
+    /// <summary>
     /// Registers the EF Core-backed ICollectionAuthorizationService.
     /// Scoped lifetime matches CatalogDbContext.
     /// </summary>

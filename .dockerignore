@@ -1,0 +1,7 @@
+**/bin/
+**/obj/
+.git/
+.github/
+data/
+dev/authelia/db.sqlite3
+dev/authelia/notification.txt

@@ -7,13 +7,34 @@ services:
       - "5036:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      # Override connection string to use the compose postgres service
       ConnectionStrings__CatalogDb: "Host=postgres;Port=5432;Database=catalog3d;Username=catalog;Password=catalog_dev"
       Storage__Root: /data
+      # OIDC authentication via local Authelia.
+      # Set Auth__Provider=Dev to revert to config-hardcoded dev users.
+      Auth__Provider: Oidc
+      # Authelia is reached at https://authelia:9091 on the compose network (self-signed TLS).
+      # The browser redirects hit https://127.0.0.1:9091; accept the cert warning once in the browser.
+      Oidc__Authority: https://authelia:9091
+      Oidc__ClientId: catalog-3d
+      Oidc__ClientSecret: catalog-dev-secret
+      Oidc__CallbackPath: /signin-oidc
+      # RequireHttpsMetadata=false: the OIDC handler fetches the discovery doc over the Authelia
+      # self-signed TLS endpoint; the handler itself is tolerant of the cert because we add the
+      # self-signed CA to the app's trust store via SSL_CERT_FILE below.
+      # This key is absent here intentionally — OidcAuthServiceRegistration auto-sets it to false
+      # in Development when the key is absent from config.
+      Authorization__SiteAdminGroups__0: admins
+      # Trust the Authelia self-signed TLS cert on the server side (app → Authelia backchannel).
+      # The cert is the same file Authelia loads at /config/tls.crt.
+      SSL_CERT_FILE: /certs/authelia-tls.crt
     volumes:
       - ./data:/data
+      # Mount the self-signed TLS cert so SSL_CERT_FILE can point to it.
+      - ./dev/authelia/tls.crt:/certs/authelia-tls.crt:ro
     depends_on:
       postgres:
+        condition: service_healthy
+      authelia:
         condition: service_healthy
     restart: unless-stopped
 
@@ -33,6 +54,23 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+    restart: unless-stopped
+
+  authelia:
+    image: authelia/authelia:4.39.13
+    ports:
+      # 127.0.0.1:9091 is the browser-facing URL. Accept the self-signed cert warning once.
+      - "127.0.0.1:9091:9091"
+    volumes:
+      - ./dev/authelia:/config
+    healthcheck:
+      # Authelia listens on HTTPS; -k skips cert validation for the health probe.
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "-S",
+             "--no-check-certificate", "https://localhost:9091/api/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
     restart: unless-stopped
 
 volumes:

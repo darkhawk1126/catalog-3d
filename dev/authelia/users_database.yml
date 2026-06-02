@@ -1,0 +1,15 @@
+---
+# Authelia 4.39.13 file-backend user database for local dev.
+# Password "claude" hashed with argon2id via:
+#   authelia crypto hash generate argon2 --password claude
+users:
+  claude:
+    disabled: false
+    displayname: "Claude"
+    # argon2id hash of "claude"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$PZf/h7nrNzOTDNjQ4jEN8A$3iaFKvyz3b+wVWCLi+HiK0uJA/NuFDo6W+p5IiZI2sM"
+    email: claude@localhost.dev
+    groups:
+      - admins
+      - media
+      - games

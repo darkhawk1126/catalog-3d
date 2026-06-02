@@ -90,6 +90,21 @@ Stable slugs, versioned prefix. This is the commitment that keeps the wiki futur
 5. **K8s manifests** — 2-container Deployment, PVC, ingress+TLS, Secrets, Authelia OIDC.
 6. **Harden** — upload streaming limits, API versioning polish, embed CSP/X-Frame knobs (deferred wiki embed).
 
+## Authelia / OIDC integration (resolved from the live homelab)
+
+- **Prod issuer**: `https://login.mallcop.dev` (Authelia **4.39.13**). Discovery at `/.well-known/openid-configuration`.
+- **Dev**: a **local Authelia 4.39.13** in docker-compose is the dev OIDC source — self-contained, never touches the live instance.
+- **Groups claim**: name `groups`, **JSON string array**, delivered via the **UserInfo endpoint** (prod has no `claims_policy`, so groups are *not* in the ID token). → OIDC handler sets `GetClaimsFromUserInfoEndpoint = true` and requests the `groups` scope. No Authelia change required.
+- **Client (house style — immich variant)**: confidential (`public: false`), PKCE `S256`, `token_endpoint_auth_method: client_secret_post`, scopes `[openid, profile, email, groups]`, grants `[authorization_code, refresh_token]`, response `[code]`. ASP.NET Core callback `/signin-oidc`; prod redirect `https://catalog.mallcop.dev/signin-oidc`. **No `end_session_endpoint`** → local sign-out only.
+- **Authorization ownership**: catalog-3d owns authz. Authelia groups are **coarse and shared** across the homelab (only `admins`, `media`, `games` exist) — do **not** add catalog-specific groups to Authelia. Mapping: config-driven `Authorization:SiteAdminGroups` (default `[admins]`) → Admin everywhere; all finer grants are `RoleAssignment` rows in catalog's DB. Principal convention: `user:<oidc-sub>` and `group:<name>`.
+- **Scheme selection**: config-driven `Auth:Provider = Dev | Oidc`; both schemes registered so dev can run hardcoded identity *or* OIDC against local Authelia. Dev-over-http sets `RequireHttpsMetadata = false` in Development only.
+
+### Deployment wiring (deferred to milestone 5 — do not touch the homelab repo before then)
+- Add `catalog-3d` client to `charts/infra/authelia/values.yaml` (`client_secret` as `$pbkdf2-sha512$310000$…` hash); app-side plaintext as a SealedSecret in catalog's namespace.
+- GitOps: edit repo → push to self-hosted remote `insta@10.13.1.30:/main/documents/git/homelab.git` → Argo CD syncs. SealedSecrets via kube-system controller.
+- Ingress: Traefik (`ingressClassName: traefik`, `websecure`) + cert-manager `letsencrypt-prod` (DNS-01 Porkbun), host `catalog.mallcop.dev`, TLS secret `catalog-3d-tls`, LB `10.13.1.15`. **No forward-auth middleware** (OIDC-native); pick `traefik-internal-only` or `traefik-crowdsec-bouncer` by exposure.
+- **DataProtection key ring**: dev uses ephemeral keys (auth cookies/anti-forgery don't survive restart). Production MUST persist the key ring (PVC or k8s Secret) or auth cookies break across pod restarts/replicas.
+
 ## Open / deferred
 
 - Wiki embed mechanism (viewer-iframe vs feed-the-3D-extension) — decide when the plugin is actually built.

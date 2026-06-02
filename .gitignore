@@ -24,6 +24,12 @@ appsettings.*.local.json
 # Dev blob storage (bind-mounted in development)
 /data/
 
+# Dev Authelia runtime state (container-generated files)
+dev/authelia/db.sqlite3
+dev/authelia/notification.txt
+dev/authelia/tls.crt
+dev/authelia/tls.key
+
 # OS
 .DS_Store
 Thumbs.db

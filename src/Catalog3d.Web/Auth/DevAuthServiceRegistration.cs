@@ -16,6 +16,12 @@ internal static class DevAuthServiceRegistration
 
         services.AddAuthorization();
 
+        // Bind so that Authorization:SiteAdminGroups applies in dev mode too.
+        // CollectionAuthorizationService depends on IOptions<CatalogAuthorizationOptions>
+        // regardless of auth scheme; binding here keeps dev and OIDC behaviour consistent.
+        services.Configure<CatalogAuthorizationOptions>(
+            configuration.GetSection(CatalogAuthorizationOptions.SectionName));
+
         services.AddDevUserContext();
         services.AddCollectionAuthorization();
         services.AddCollectionResourceAuthorization();
