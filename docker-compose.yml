@@ -24,11 +24,15 @@ services:
       # This key is absent here intentionally — OidcAuthServiceRegistration auto-sets it to false
       # in Development when the key is absent from config.
       Authorization__SiteAdminGroups__0: admins
+      # Point the app at the render sidecar on the compose network.
+      RenderSidecar__BaseUrl: http://render-sidecar:5200
+      RenderSidecar__TimeoutSeconds: "60"
+      RenderSidecar__VolumeRoot: /data
       # Trust the Authelia self-signed TLS cert on the server side (app → Authelia backchannel).
       # The cert is the same file Authelia loads at /config/tls.crt.
       SSL_CERT_FILE: /certs/authelia-tls.crt
     volumes:
-      - ./data:/data
+      - blob_data:/data
       # Mount the self-signed TLS cert so SSL_CERT_FILE can point to it.
       - ./dev/authelia/tls.crt:/certs/authelia-tls.crt:ro
     depends_on:
@@ -36,6 +40,29 @@ services:
         condition: service_healthy
       authelia:
         condition: service_healthy
+      render-sidecar:
+        condition: service_healthy
+    restart: unless-stopped
+
+  render-sidecar:
+    build:
+      context: .
+      dockerfile: src/Catalog3d.RenderSidecar/Dockerfile
+    environment:
+      ASPNETCORE_HTTP_PORTS: "5200"
+      # Must match Storage__Root in the app so both containers resolve blobs from the same root.
+      SIDECAR__VOLUMEROOT: /data
+      SIDECAR__RENDERERBINARY: /usr/bin/stl-thumb
+      SIDECAR__RENDERWIDTH: "512"
+      SIDECAR__RENDERHEIGHT: "512"
+    volumes:
+      - blob_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/5200' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
 
   postgres:
@@ -75,3 +102,5 @@ services:
 
 volumes:
   postgres_data:
+  # Shared between app and render-sidecar: blobs/ (STL) + thumbs/ (PNG).
+  blob_data:

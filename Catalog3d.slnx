@@ -4,6 +4,7 @@
     <Project Path="src/Catalog3d.Domain/Catalog3d.Domain.csproj" />
     <Project Path="src/Catalog3d.Infrastructure/Catalog3d.Infrastructure.csproj" />
     <Project Path="src/Catalog3d.Web/Catalog3d.Web.csproj" />
+    <Project Path="src/Catalog3d.RenderSidecar/Catalog3d.RenderSidecar.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Catalog3d.Tests/Catalog3d.Tests.csproj" />

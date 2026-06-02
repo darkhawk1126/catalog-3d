@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D Viewer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a1e; }
+    #canvas { display: block; width: 100%; height: 100%; }
+    #status {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      color: #9ca3af;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      pointer-events: none;
+    }
+    #status.hidden { display: none; }
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid #374151;
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #error-msg {
+      color: #f87171;
+      text-align: center;
+      max-width: 320px;
+      line-height: 1.5;
+      display: none;
+    }
+    #error-msg.visible { display: block; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="status" role="status" aria-live="polite">
+    <div class="spinner" id="spinner"></div>
+    <span id="status-text">Loading model…</span>
+    <span id="error-msg"></span>
+  </div>
+
+  <script type="module">
+    import * as THREE from '/viewer/three.module.min.js';
+    import { STLLoader } from '/viewer/STLLoader.js';
+
+    // GEOMETRY_URL is injected server-side by the /viewer/{fileId} endpoint.
+    const GEOMETRY_URL = '{{GEOMETRY_URL}}';
+
+    const canvas = document.getElementById('canvas');
+    const statusEl = document.getElementById('status');
+    const statusText = document.getElementById('status-text');
+    const spinner = document.getElementById('spinner');
+    const errorMsg = document.getElementById('error-msg');
+
+    function showError(msg) {
+      spinner.style.display = 'none';
+      statusText.style.display = 'none';
+      errorMsg.textContent = msg;
+      errorMsg.classList.add('visible');
+    }
+
+    // --- Renderer ---
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight, false);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    // --- Scene ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a1e);
+
+    // --- Camera ---
+    const aspect = (canvas.clientWidth || window.innerWidth) / (canvas.clientHeight || window.innerHeight);
+    const camera = new THREE.PerspectiveCamera(45, aspect, 0.01, 100000);
+    camera.position.set(0, 0, 5);
+
+    // --- Lights: neutral three-point rig on dark background ---
+    const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambient);
+
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    keyLight.position.set(5, 8, 6);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.set(1024, 1024);
+    scene.add(keyLight);
+
+    const fillLight = new THREE.DirectionalLight(0xc8d8ff, 0.45);
+    fillLight.position.set(-4, 2, -5);
+    scene.add(fillLight);
+
+    const rimLight = new THREE.DirectionalLight(0xffeedd, 0.3);
+    rimLight.position.set(0, -3, -4);
+    scene.add(rimLight);
+
+    // --- Material ---
+    const material = new THREE.MeshStandardMaterial({
+      color: 0x8b9cce,
+      roughness: 0.55,
+      metalness: 0.15,
+    });
+
+    // --- Minimal orbit controls (no external dependency) ---
+    // State: spherical coordinates + pan offset + radius.
+    const state = {
+      theta: Math.PI / 4,   // azimuth
+      phi: Math.PI / 3,     // polar (clamped away from poles)
+      radius: 5,
+    };
+    const target = new THREE.Vector3();
+    const panOffset = new THREE.Vector3();
+    let dragType = null; // 'rotate' | 'pan' | null
+    let lastX = 0, lastY = 0;
+
+    function updateCamera() {
+      const sinPhi = Math.sin(state.phi);
+      const cosPhi = Math.cos(state.phi);
+      const pivot = target.clone().add(panOffset);
+      camera.position.set(
+        pivot.x + state.radius * sinPhi * Math.sin(state.theta),
+        pivot.y + state.radius * cosPhi,
+        pivot.z + state.radius * sinPhi * Math.cos(state.theta),
+      );
+      camera.lookAt(pivot);
+    }
+
+    // Mouse / touch handlers on the canvas element.
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+    canvas.addEventListener('pointerdown', e => {
+      canvas.setPointerCapture(e.pointerId);
+      lastX = e.clientX;
+      lastY = e.clientY;
+      dragType = e.button === 2 ? 'pan' : 'rotate';
+    });
+
+    canvas.addEventListener('pointermove', e => {
+      if (!dragType) return;
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+
+      if (dragType === 'rotate') {
+        state.theta -= dx * 0.005;
+        state.phi = Math.max(0.05, Math.min(Math.PI - 0.05, state.phi - dy * 0.005));
+      } else {
+        // Pan in camera-local right/up.
+        const right = new THREE.Vector3();
+        camera.getWorldDirection(right);
+        right.cross(camera.up).normalize().multiplyScalar(-dx * state.radius * 0.001);
+        const up = camera.up.clone().normalize().multiplyScalar(dy * state.radius * 0.001);
+        panOffset.add(right).add(up);
+      }
+      updateCamera();
+    });
+
+    canvas.addEventListener('pointerup', () => { dragType = null; });
+    canvas.addEventListener('pointercancel', () => { dragType = null; });
+
+    canvas.addEventListener('wheel', e => {
+      e.preventDefault();
+      // Natural scroll: positive delta = zoom out.
+      state.radius *= 1 + e.deltaY * 0.001;
+      state.radius = Math.max(0.001, state.radius);
+      updateCamera();
+    }, { passive: false });
+
+    // --- Resize ---
+    const resizeObserver = new ResizeObserver(() => {
+      const w = canvas.clientWidth || 1;
+      const h = canvas.clientHeight || 1;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    });
+    resizeObserver.observe(document.body);
+
+    // --- Render loop ---
+    function animate() {
+      requestAnimationFrame(animate);
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // --- Load STL ---
+    // withCredentials sends the auth cookie so the Download-gated endpoint accepts the request.
+    const loader = new STLLoader();
+    loader.withCredentials = true;
+
+    loader.load(
+      GEOMETRY_URL,
+      geometry => {
+        geometry.computeVertexNormals();
+        geometry.center();
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        scene.add(mesh);
+
+        // Auto-fit: position camera so the bounding sphere fills ~45% of FOV.
+        const box = new THREE.Box3().setFromObject(mesh);
+        const sphere = box.getBoundingSphere(new THREE.Sphere());
+        target.copy(sphere.center);
+        panOffset.set(0, 0, 0);
+
+        // distance = r / sin(halfFov), padded by 20%.
+        const halfFovRad = THREE.MathUtils.degToRad(camera.fov / 2);
+        state.radius = (sphere.radius / Math.sin(halfFovRad)) * 1.2;
+        camera.near = sphere.radius * 0.001;
+        camera.far = sphere.radius * 100;
+        camera.updateProjectionMatrix();
+
+        updateCamera();
+        statusEl.classList.add('hidden');
+      },
+      xhr => {
+        if (xhr.total > 0) {
+          const pct = Math.round((xhr.loaded / xhr.total) * 100);
+          statusText.textContent = `Loading model… ${pct}%`;
+        }
+      },
+      err => {
+        // Network errors from 401/403 often surface with empty or generic messages.
+        const msg = err?.message ?? String(err);
+        const isDenied = msg.includes('401') || msg.includes('403') || msg.includes('Failed to fetch');
+        showError(isDenied
+          ? 'Access denied — you do not have permission to view this model.'
+          : `Failed to load model: ${msg || 'network error'}`);
+      }
+    );
+  </script>
+</body>
+</html>

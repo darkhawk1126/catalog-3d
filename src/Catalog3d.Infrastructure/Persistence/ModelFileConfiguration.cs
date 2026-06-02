@@ -65,10 +65,12 @@ internal sealed class ModelFileConfiguration : IEntityTypeConfiguration<ModelFil
             .HasColumnName("updated_at")
             .IsRequired();
 
-        // BlobKey uniqueness enforces content-addressed dedup at the database level.
-        // A single blob (same SHA-256) can appear only once per model to prevent redundant storage.
-        builder.HasIndex(f => new { f.ModelId, f.BlobKey })
+        // BlobKey uniqueness enforces content-addressed dedup scoped to (model, blob, kind).
+        // Kind is part of the key because the thumbnail ModelFile intentionally shares the STL's
+        // BlobKey: the sidecar produces thumbs/{key[0..2]}/{key}.png from the same content hash.
+        // Without Kind, inserting a Thumbnail row for an existing STL would violate uniqueness.
+        builder.HasIndex(f => new { f.ModelId, f.BlobKey, f.Kind })
             .IsUnique()
-            .HasDatabaseName("ix_model_files_model_blobkey");
+            .HasDatabaseName("ix_model_files_model_blobkey_kind");
     }
 }

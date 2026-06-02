@@ -2,11 +2,13 @@ using Catalog3d.Application.Abstractions;
 using Catalog3d.Domain.Entities;
 using Catalog3d.Domain.Enums;
 using Catalog3d.Infrastructure.Persistence;
+using Catalog3d.Infrastructure.Rendering;
 using Catalog3d.Web.Endpoints.Dto;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;
 
 namespace Catalog3d.Web.Endpoints;
@@ -50,8 +52,31 @@ internal static class EndpointRegistration
         models.MapGet("/{slug}", GetModelBySlugAsync)
             .RequireAuthorization();
 
+        // GET /api/v1/models/{slug}/thumbnail — Preview-gated PNG
+        // Serves the precomputed thumbnail for the named model.
+        // Authorization: caller must hold CollectionRole.Preview (or higher) on the model's collection.
+        // Response: 200 image/png on hit; 404 when model unknown, caller lacks Preview, or thumbnail
+        //           not yet rendered (render still pending or failed).
+        models.MapGet("/{slug}/thumbnail", GetModelThumbnailAsync)
+            .RequireAuthorization();
+
+        // GET /api/v1/models/files/{fileId} — Download-gated STL stream
+        // Streams the raw STL bytes for a ModelFile identified by its GUID.
+        // Authorization: caller must hold CollectionRole.Download (or higher) on the file's collection.
+        // This is the geometry URL that the viewer JS fetches; it MUST remain stable.
+        // The viewer constructs this URL as: GeometryUrlPattern with "{fileId}" replaced by the GUID string.
+        // Response: 200 application/octet-stream (or model/stl) with Content-Disposition: attachment.
+        models.MapGet("/files/{fileId:guid}", GetModelFileAsync)
+            .RequireAuthorization();
+
         // Viewer
-        // GET /viewer/{fileId} — milestone 3
+        // GET /viewer/{fileId} — Download-gated embeddable HTML viewer
+        // Returns a self-contained HTML page that bootstraps the three.js STL viewer.
+        // Authorization: caller must hold CollectionRole.Download — interactive viewing ≡ geometry access.
+        // The viewer JS fetches geometry via: GET /api/v1/models/files/{fileId}
+        // Route is intentionally outside /api/v1 so it is directly iframe-able from the wiki.
+        app.MapGet("/viewer/{fileId:guid}", GetViewerAsync)
+            .RequireAuthorization();
 
         return app;
     }
@@ -197,6 +222,7 @@ internal static class EndpointRegistration
         [FromServices] IUserContext userContext,
         [FromServices] CatalogDbContext db,
         [FromServices] IFileStore fileStore,
+        [FromServices] IRenderQueue renderQueue,
         CancellationToken cancellationToken)
     {
         var collection = await db.Collections
@@ -291,6 +317,9 @@ internal static class EndpointRegistration
                 db.ModelFiles.Add(modelFile);
                 await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
+                // Trigger async thumbnail render; Model.Status stays Processing until complete.
+                await renderQueue.EnqueueAsync(modelFile.Id, cancellationToken).ConfigureAwait(false);
+
                 uploadResult = new UploadModelResponse(
                     model.Id,
                     modelFile.Id,
@@ -339,5 +368,198 @@ internal static class EndpointRegistration
                 chars[i] = '-';
         }
         return new string(chars).Trim('-');
+    }
+
+    // -------------------------------------------------------------------------
+    // GET /api/v1/models/{slug}/thumbnail
+    // Preview-gated. Serves the precomputed PNG from the "thumbs" blob subdirectory.
+    // -------------------------------------------------------------------------
+    private static async Task<IResult> GetModelThumbnailAsync(
+        string slug,
+        [FromServices] ICollectionAuthorizationService authService,
+        [FromServices] IUserContext userContext,
+        [FromServices] CatalogDbContext db,
+        [FromServices] IFileStore fileStore,
+        CancellationToken cancellationToken)
+    {
+        var model = await db.Models
+            .AsNoTracking()
+            .FirstOrDefaultAsync(m => m.Slug == slug, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (model is null)
+            return Results.NotFound();
+
+        // Collections are invisible to callers without Preview — return 404, not 403.
+        var hasAccess = await authService
+            .AuthorizeAsync(model.CollectionId, userContext, CollectionRole.Preview, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!hasAccess)
+            return Results.NotFound();
+
+        // Thumbnail must be Complete; pending/failed renders are not-found to Preview callers.
+        var thumb = await db.ModelFiles
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                f => f.ModelId == model.Id
+                  && f.Kind == ModelFileKind.Thumbnail
+                  && f.RenderStatus == RenderStatus.Complete,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (thumb is null)
+            return Results.NotFound();
+
+        // The sidecar writes {blobKey}.png into the thumbs subdirectory.
+        // DiskFileStore uses the key verbatim — append ".png" to match the sidecar output path.
+        Stream stream;
+        try
+        {
+            stream = await fileStore
+                .ReadAsync(thumb.BlobKey + ".png", "thumbs", cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (FileNotFoundException)
+        {
+            return Results.NotFound();
+        }
+
+        // 1-hour public cache; thumbnails are content-addressed (key = STL hash) so they
+        // never change for a given slug once rendered.
+        return Results.Stream(stream, "image/png", enableRangeProcessing: false);
+    }
+
+    // -------------------------------------------------------------------------
+    // GET /api/v1/models/files/{fileId}
+    // Download-gated. Streams raw STL bytes. This is the geometry URL for the viewer.
+    // Geometry URL pattern: /api/v1/models/files/{fileId}
+    //   where {fileId} is the ModelFile.Id (Guid, lowercase, no braces).
+    // -------------------------------------------------------------------------
+    private static async Task<IResult> GetModelFileAsync(
+        Guid fileId,
+        [FromServices] ICollectionAuthorizationService authService,
+        [FromServices] IUserContext userContext,
+        [FromServices] CatalogDbContext db,
+        [FromServices] IFileStore fileStore,
+        CancellationToken cancellationToken)
+    {
+        var modelFile = await db.ModelFiles
+            .AsNoTracking()
+            .Include(f => f.Model)
+            .FirstOrDefaultAsync(f => f.Id == fileId, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (modelFile is null)
+            return Results.NotFound();
+
+        // viewer ≡ download: both require the Download role. Invisible = 404.
+        var hasAccess = await authService
+            .AuthorizeAsync(modelFile.Model.CollectionId, userContext, CollectionRole.Download, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!hasAccess)
+            return Results.NotFound();
+
+        Stream stream;
+        try
+        {
+            stream = await fileStore
+                .ReadAsync(modelFile.BlobKey, "blobs", cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (FileNotFoundException)
+        {
+            return Results.NotFound();
+        }
+
+        // Content-addressed: slug is human-readable; blobKey is the stable download name.
+        var downloadName = $"{modelFile.Model.Slug}.stl";
+
+        return Results.Stream(
+            stream,
+            contentType: "model/stl",
+            fileDownloadName: downloadName,
+            enableRangeProcessing: true);
+    }
+
+    // -------------------------------------------------------------------------
+    // GET /viewer/{fileId}
+    // Download-gated embeddable HTML page. Bootstraps the three.js STL viewer.
+    // The viewer JS fetches geometry at: GET /api/v1/models/files/{fileId}
+    // -------------------------------------------------------------------------
+    private static async Task<IResult> GetViewerAsync(
+        Guid fileId,
+        [FromServices] ICollectionAuthorizationService authService,
+        [FromServices] IUserContext userContext,
+        [FromServices] CatalogDbContext db,
+        [FromServices] IOptions<ViewerOptions> viewerOptions,
+        [FromServices] IWebHostEnvironment env,
+        CancellationToken cancellationToken)
+    {
+        var modelFile = await db.ModelFiles
+            .AsNoTracking()
+            .Include(f => f.Model)
+            .FirstOrDefaultAsync(f => f.Id == fileId, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (modelFile is null)
+            return Results.NotFound();
+
+        // Interactive viewer = download equivalent (cornerstone). Same gate as geometry endpoint.
+        var hasAccess = await authService
+            .AuthorizeAsync(modelFile.Model.CollectionId, userContext, CollectionRole.Download, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!hasAccess)
+            return Results.NotFound();
+
+        var opts = viewerOptions.Value;
+        var geometryUrl = opts.GeometryUrlPattern.Replace(
+            "{fileId}", fileId.ToString("D"), StringComparison.Ordinal);
+
+        var html = BuildViewerHtml(env, geometryUrl);
+
+        // SAMEORIGIN allows wiki iframe embedding from the same origin.
+        return Results.Content(html, "text/html; charset=utf-8");
+    }
+
+    // Cached composed HTML: template + inlined bundle. Built once on first request.
+    // The bundle is ~480 KB minified (three.js r177 + STLLoader + viewer logic).
+    // Inlining avoids requiring UseStaticFiles middleware or cross-origin auth complications.
+    private static string? _viewerHtmlBase;
+    private static readonly Lock _viewerHtmlLock = new();
+
+    private static string GetViewerHtmlBase(IWebHostEnvironment env)
+    {
+        if (_viewerHtmlBase is not null)
+            return _viewerHtmlBase;
+
+        lock (_viewerHtmlLock)
+        {
+            if (_viewerHtmlBase is not null)
+                return _viewerHtmlBase;
+
+            var viewerRoot = Path.Combine(env.WebRootPath, "viewer");
+            var template = File.ReadAllText(Path.Combine(viewerRoot, "viewer-template.html"));
+            var bundle = File.ReadAllText(Path.Combine(viewerRoot, "viewer-app.bundle.js"));
+            _viewerHtmlBase = template.Replace("{{BUNDLE}}", bundle, StringComparison.Ordinal);
+            return _viewerHtmlBase;
+        }
+    }
+
+    // Builds a self-contained HTML page with the three.js viewer bundle inlined.
+    // The geometry URL is injected as a JSON-encoded string into the global config script block.
+    private static string BuildViewerHtml(IWebHostEnvironment env, string geometryUrl)
+    {
+        // JSON-encode the URL so it is safe to embed verbatim inside a JS string literal.
+        var jsonUrl = System.Text.Json.JsonSerializer.Serialize(geometryUrl);
+
+        // The template contains the placeholder as a bare token inside a script assignment:
+        //   window.__CATALOG3D_GEOMETRY_URL__ = '{{GEOMETRY_URL}}';
+        // We replace the entire right-hand side (including the single-quote delimiters that
+        // mark the placeholder) with the JSON-serialized value (which carries its own quotes).
+        var htmlBase = GetViewerHtmlBase(env);
+        return htmlBase.Replace("'{{GEOMETRY_URL}}'", jsonUrl, StringComparison.Ordinal);
     }
 }

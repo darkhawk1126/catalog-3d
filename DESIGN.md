@@ -14,7 +14,7 @@ Replaces a shoehorned MediaWiki STL setup. C# backend, k3s homelab, HTTPS ingres
 | Blob storage | On-disk via `IFileStore` abstraction (swappable to MinIO/S3). Bind-mount dev, PVC prod |
 | Auth | ASP.NET Core authentication schemes behind one `IUserContext`. Dev = config-hardcoded users; Prod = OIDC (Authelia). API-key scheme slot reserved for future programmatic/wiki access |
 | ACL model | **Collection-level RBAC.** OIDC groups → roles, scoped per collection |
-| Preview | Static PNG = unauthorized/preview tier; interactive viewer = download tier (see Security model). Thumbnails precomputed at upload by a **render sidecar** (f3d) |
+| Preview | Static PNG = unauthorized/preview tier; interactive viewer = download tier (see Security model). Thumbnails precomputed at upload by a **render sidecar** (`stl-thumb`) |
 | Admin/Upload UI | **Blazor Server**, hosted in the same app, calling application services directly |
 | Embeddable viewer | Separate JS bundle (three.js + STLLoader), iframe-able route, download-gated |
 | MediaWiki future | **Design API-first, defer embed mechanism.** Commit only to a versioned JSON API + stable slug URLs. Keep "embed our viewer" vs "feed the existing Wikimedia 3D extension" both open |
@@ -104,9 +104,10 @@ Stable slugs, versioned prefix. This is the commitment that keeps the wiki futur
 - GitOps: edit repo → push to self-hosted remote `insta@10.13.1.30:/main/documents/git/homelab.git` → Argo CD syncs. SealedSecrets via kube-system controller.
 - Ingress: Traefik (`ingressClassName: traefik`, `websecure`) + cert-manager `letsencrypt-prod` (DNS-01 Porkbun), host `catalog.mallcop.dev`, TLS secret `catalog-3d-tls`, LB `10.13.1.15`. **No forward-auth middleware** (OIDC-native); pick `traefik-internal-only` or `traefik-crowdsec-bouncer` by exposure.
 - **DataProtection key ring**: dev uses ephemeral keys (auth cookies/anti-forgery don't survive restart). Production MUST persist the key ring (PVC or k8s Secret) or auth cookies break across pod restarts/replicas.
+- **DB migrations**: not auto-applied on startup. Production needs an init container (or startup `MigrateAsync`) to run `ef database update`; fresh dev DBs currently need a manual migration step.
 
 ## Open / deferred
 
 - Wiki embed mechanism (viewer-iframe vs feed-the-3D-extension) — decide when the plugin is actually built.
-- f3d vs Blender-headless for render — f3d is the default pick (single binary, headless STL→PNG); revisit only if quality/format needs exceed it.
+- Renderer = **`stl-thumb`** (purpose-built STL→PNG, OSMesa software-GL headless, lightweight container). Chosen over f3d (VTK-based, heavier + fiddlier headless) and three.js-in-headless-Chromium (visually consistent with the viewer but ships Chromium). Sits behind `IThumbnailRenderer` + HTTP contract, so swappable if format needs grow (e.g. 3MF/OBJ → revisit f3d).
 - MinIO migration — left open via `IFileStore`; not built now.

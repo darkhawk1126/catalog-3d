@@ -1,6 +1,8 @@
+using Catalog3d.Infrastructure.Rendering;
 using Catalog3d.Web.Auth;
 using Catalog3d.Web.Endpoints;
 using Catalog3d.Web.Persistence;
+using Catalog3d.Web.Rendering;
 using Catalog3d.Web.Storage;
 using Scalar.AspNetCore;
 
@@ -9,6 +11,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddOpenApi();
 builder.Services.AddCatalogPersistence(builder.Configuration);
 builder.Services.AddDiskFileStorage(builder.Configuration);
+builder.Services.AddRenderingServices(builder.Configuration);
+builder.Services.Configure<ViewerOptions>(
+    builder.Configuration.GetSection(ViewerOptions.SectionName));
 
 // Auth:Provider selects the active authentication scheme.
 // Both registrations are always compiled in; only one is wired at runtime.
