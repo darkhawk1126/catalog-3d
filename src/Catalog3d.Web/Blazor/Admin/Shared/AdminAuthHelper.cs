@@ -103,19 +103,10 @@ public sealed class AdminAuthHelper
         var adminGroups = _authzOptions.SiteAdminGroups;
         if (adminGroups is null or { Count: 0 }) return false;
 
-        var provider = _configuration["Auth:Provider"] ?? "Dev";
-        IEnumerable<string> groups;
-
-        if (provider.Equals("Oidc", StringComparison.OrdinalIgnoreCase))
-        {
-            // OIDC: groups claim is literally "groups", no prefix stored on the claim.
-            groups = _user.FindAll("groups").Select(c => c.Value);
-        }
-        else
-        {
-            // Dev: DevAuthHandler stores groups under the literal claim type "groups", no prefix.
-            groups = _user.FindAll("groups").Select(c => c.Value);
-        }
+        // Both OIDC and Dev schemes store groups under the literal "groups" claim type.
+        // M1: compare OrdinalIgnoreCase; OidcUserContext/DevUserContext lower-case at read
+        // but the raw claim values here may still be mixed-case.
+        var groups = _user.FindAll("groups").Select(c => c.Value);
 
         foreach (var group in groups)
         {

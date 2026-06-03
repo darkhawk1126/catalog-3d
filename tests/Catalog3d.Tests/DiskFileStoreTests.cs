@@ -116,6 +116,83 @@ public sealed class DiskFileStoreTests : IDisposable
         Assert.True(await _store.ExistsAsync(thumbKey, "thumbs"));
     }
 
+    // -------------------------------------------------------------------------
+    // SizeAsync — H7
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task SizeAsync_ReturnsCorrectByteLength()
+    {
+        var payload = new byte[1337];
+        Random.Shared.NextBytes(payload);
+
+        using var stream = new MemoryStream(payload);
+        var key = await _store.WriteAsync(stream, "blobs");
+
+        var size = await _store.SizeAsync(key, "blobs");
+
+        Assert.Equal(1337L, size);
+    }
+
+    [Fact]
+    public async Task SizeAsync_ThrowsFileNotFound_WhenBlobAbsent()
+    {
+        // A valid-format key that was never written.
+        var key = new string('a', 64);
+
+        await Assert.ThrowsAsync<FileNotFoundException>(
+            () => _store.SizeAsync(key, "blobs"));
+    }
+
+    // -------------------------------------------------------------------------
+    // BlobPath key validation — M13
+    // -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("../etc/passwd")]
+    [InlineData("not-a-hash")]
+    [InlineData("ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890")]  // uppercase
+    [InlineData("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890.exe")]
+    public async Task ReadAsync_InvalidKey_ThrowsArgumentException(string badKey)
+    {
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => _store.ReadAsync(badKey, "blobs"));
+    }
+
+    [Theory]
+    [InlineData("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")]        // 64-char hex
+    [InlineData("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890.png")]    // 64-char hex + .png
+    public async Task BlobPath_ValidKeys_DoNotThrow(string validKey)
+    {
+        // ExistsAsync exercises BlobPath; a missing file is fine — we just need no ArgumentException.
+        var ex = await Record.ExceptionAsync(() => _store.ExistsAsync(validKey, "blobs"));
+        Assert.Null(ex);
+    }
+
+    // -------------------------------------------------------------------------
+    // Concurrent identical-content writes — M9
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task WriteAsync_ConcurrentIdenticalContent_AllReturnSameKeyWithNoException()
+    {
+        const int concurrency = 20;
+        var payload = new byte[4096];
+        Random.Shared.NextBytes(payload);
+        var expectedKey = ToHexSha256(payload);
+
+        var tasks = Enumerable.Range(0, concurrency).Select(_ =>
+            _store.WriteAsync(new MemoryStream(payload), "blobs"));
+
+        var keys = await Task.WhenAll(tasks);
+
+        Assert.All(keys, k => Assert.Equal(expectedKey, k));
+        // Exactly one file on disk (dedup).
+        var blobPath = Path.Combine(_root, "blobs", expectedKey[..2], expectedKey);
+        Assert.True(File.Exists(blobPath));
+    }
+
     private static string ToHexSha256(byte[] data)
     {
         var hash = SHA256.HashData(data);

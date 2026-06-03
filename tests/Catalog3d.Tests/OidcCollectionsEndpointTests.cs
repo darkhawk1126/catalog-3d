@@ -34,8 +34,6 @@ namespace Catalog3d.Tests;
 ///   A. User matched by "user:&lt;sub&gt;" direct assignment → sees assigned collections.
 ///   B. User matched by "group:&lt;name&gt;" assignment → sees group-assigned collections.
 ///   C. SiteAdminGroups bootstrap: "group:admins" → sees ALL collections.
-///      (Will FAIL until the downstream authorization agent implements the
-///      short-circuit in CollectionAuthorizationService / a decorator.)
 ///   D. User with no assignment → empty array (200).
 ///   E. Unauthenticated user → 401.
 /// </summary>
@@ -127,7 +125,6 @@ public sealed class OidcCollectionsEndpointTests
     // -------------------------------------------------------------------------
 
     [Fact]
-    [Trait("Milestone", "2-SiteAdminGroups")]
     public async Task GetCollections_SiteAdminGroup_ReturnsAllCollections()
     {
         await using var factory = OidcCollectionsFixture.Authenticated(
@@ -250,6 +247,10 @@ public sealed class OidcCollectionsFixture : WebApplicationFactory<Program>, IAs
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
+
+        // AllowedHosts is scoped to catalog.mallcop.dev in appsettings.json; override
+        // for test clients which send requests to localhost.
+        builder.UseSetting("AllowedHosts", "*");
 
         builder.ConfigureServices(services =>
         {

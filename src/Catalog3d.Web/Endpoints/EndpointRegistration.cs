@@ -5,7 +5,6 @@ using Catalog3d.Infrastructure.Persistence;
 using Catalog3d.Infrastructure.Rendering;
 using Catalog3d.Web.Auth;
 using Catalog3d.Web.Endpoints.Dto;
-using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
@@ -47,6 +46,10 @@ internal static class EndpointRegistration
             .RequireAuthorization();
 
         // POST /api/v1/collections/{slug}/models  (streaming multipart upload)
+        // DisableAntiforgery is correct here: this is a REST endpoint for programmatic
+        // clients (API, MediaWiki plugin), not a browser form. CSRF is instead blocked
+        // by the Origin check inside the handler, which rejects cross-site browser
+        // requests while allowing token-authenticated API clients (no Origin header).
         collections.MapPost("/{slug}/models", UploadModelAsync)
             .RequireAuthorization()
             .DisableAntiforgery();
@@ -218,8 +221,10 @@ internal static class EndpointRegistration
 
     // -------------------------------------------------------------------------
     // POST /api/v1/collections/{slug}/models
-    // Uploader-gated. Streams multipart body directly to IFileStore — never buffers.
-    // Reads: "name" and "description" form fields + "file" file part.
+    // Uploader-gated. Streams multipart body to IModelUploadService — never buffers.
+    // Reads: "name", "description", "slug" form fields + "file" file part.
+    // All upload logic (size enforcement, STL validation, slug dedup) lives in the
+    // shared IModelUploadService so the Blazor UI and REST endpoint share one pipeline.
     // -------------------------------------------------------------------------
     private static async Task<IResult> UploadModelAsync(
         string slug,
@@ -227,29 +232,39 @@ internal static class EndpointRegistration
         [FromServices] ICollectionAuthorizationService authService,
         [FromServices] IUserContext userContext,
         [FromServices] CatalogDbContext db,
-        [FromServices] IFileStore fileStore,
-        [FromServices] IRenderQueue renderQueue,
+        [FromServices] IModelUploadService uploadService,
         CancellationToken cancellationToken)
     {
         var collection = await db.Collections
+            .AsNoTracking()
             .FirstOrDefaultAsync(c => c.Slug == slug, cancellationToken)
             .ConfigureAwait(false);
 
         if (collection is null)
             return Results.NotFound();
 
-        var hasAccess = await authService
-            .AuthorizeAsync(collection.Id, userContext, CollectionRole.Uploader, cancellationToken)
+        // Single round-trip: fetch the effective role and branch locally.
+        // Preview-only callers (who have a role but insufficient privilege) get 403.
+        // No-role callers get 404 (collection stays invisible).
+        var effectiveRole = await authService
+            .GetEffectiveRoleAsync(collection.Id, userContext, cancellationToken)
             .ConfigureAwait(false);
 
-        // Collections are invisible to unauthorized callers — 404, not 403.
-        // Preview-only callers (who DO have a role but insufficient privilege) get 403.
-        var hasAnyRole = await authService
-            .AuthorizeAsync(collection.Id, userContext, CollectionRole.Preview, cancellationToken)
-            .ConfigureAwait(false);
+        if (effectiveRole is null)
+            return Results.NotFound();
 
-        if (!hasAccess)
-            return hasAnyRole ? Results.Forbid() : Results.NotFound();
+        if (effectiveRole < CollectionRole.Uploader)
+            return Results.Forbid();
+
+        // CSRF guard: if the request carries an Origin header, it came from a browser.
+        // Reject it unless the origin matches our own host. Pure programmatic clients
+        // (curl, SDKs) send no Origin header and are always allowed through.
+        var originHeader = httpContext.Request.Headers.Origin.ToString();
+        if (!string.IsNullOrEmpty(originHeader)
+            && !originHeader.Contains(httpContext.Request.Host.Host, StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.Forbid();
+        }
 
         if (!httpContext.Request.HasFormContentType)
             return Results.BadRequest("Request must be multipart/form-data.");
@@ -265,18 +280,15 @@ internal static class EndpointRegistration
         if (string.IsNullOrEmpty(boundary))
             return Results.BadRequest("Missing multipart boundary.");
 
-        // Disable request body size limit for this endpoint — streaming, no buffer cap.
-        var bodySizeFeature = httpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
-        if (bodySizeFeature is not null)
-            bodySizeFeature.MaxRequestBodySize = null;
-
-        // Parse the multipart body without buffering file content to disk or memory.
+        // Parse the multipart body. Fields before the file part populate the request;
+        // fields after the file part cannot be read (body is consumed once, no seeking).
+        // Callers must send name/description/slug fields BEFORE the file part.
         var reader = new MultipartReader(boundary, httpContext.Request.Body);
 
         string? modelName = null;
         string? modelDescription = null;
         string? modelSlugOverride = null;
-        UploadModelResponse? uploadResult = null;
+        IResult? uploadResult = null;
 
         MultipartSection? section;
         while ((section = await reader.ReadNextSectionAsync(cancellationToken).ConfigureAwait(false)) is not null)
@@ -286,60 +298,50 @@ internal static class EndpointRegistration
 
             if (disposition.IsFileDisposition())
             {
-                // Stream directly to IFileStore — no intermediate buffering.
-                var blobKey = await fileStore
-                    .WriteAsync(section.Body, "blobs", cancellationToken)
+                var fileName = disposition.FileName.Value ?? "upload";
+                var request = new ModelUploadRequest
+                {
+                    CollectionId = collection.Id,
+                    OwnerId = userContext.UserId,
+                    FileStream = section.Body,
+                    FileName = fileName,
+                    SlugOverride = modelSlugOverride,
+                    ModelName = modelName,
+                    Description = modelDescription,
+                };
+
+                var result = await uploadService
+                    .UploadAsync(request, cancellationToken)
                     .ConfigureAwait(false);
 
-                // Persist model + file record.
-                var now = DateTimeOffset.UtcNow;
-                var resolvedSlug = modelSlugOverride
-                    ?? SlugFromFileName(disposition.FileName.Value ?? "upload");
-
-                var model = new Model
+                uploadResult = result switch
                 {
-                    Id = Guid.NewGuid(),
-                    CollectionId = collection.Id,
-                    Slug = resolvedSlug,
-                    Name = modelName ?? resolvedSlug,
-                    Description = modelDescription ?? string.Empty,
-                    Owner = userContext.UserId,
-                    Status = ModelStatus.Processing,
-                    CreatedAt = now,
-                    UpdatedAt = now,
+                    ModelUploadResult.Success s => Results.Created(
+                        $"/api/v1/models/{s.Model.Slug}",
+                        new UploadModelResponse(
+                            s.Model.Id,
+                            s.File.Id,
+                            s.Model.Slug,
+                            s.File.BlobKey,
+                            s.File.Size,
+                            s.File.Sha256)),
+
+                    ModelUploadResult.SlugConflict c =>
+                        Results.Conflict(new { error = "slug_conflict", slug = c.Slug }),
+
+                    ModelUploadResult.InvalidSlug i =>
+                        Results.BadRequest(new { error = "invalid_slug", reason = i.Reason }),
+
+                    ModelUploadResult.InvalidContent ic =>
+                        Results.BadRequest(new { error = "invalid_content", reason = ic.Reason }),
+
+                    ModelUploadResult.TooLarge tl =>
+                        Results.BadRequest(new { error = "too_large", limitBytes = tl.LimitBytes }),
+
+                    _ => Results.StatusCode(500),
                 };
 
-                var mimeType = section.ContentType ?? "application/octet-stream";
-
-                var modelFile = new ModelFile
-                {
-                    Id = Guid.NewGuid(),
-                    ModelId = model.Id,
-                    Kind = ModelFileKind.Stl,
-                    BlobKey = blobKey,
-                    Size = 0,       // Size is computed inside DiskFileStore; 0 is placeholder until render sidecar updates it.
-                    MimeType = mimeType,
-                    Sha256 = blobKey, // BlobKey is the SHA-256 hex — reuse it here.
-                    RenderStatus = RenderStatus.Pending,
-                    CreatedAt = now,
-                    UpdatedAt = now,
-                };
-
-                db.Models.Add(model);
-                db.ModelFiles.Add(modelFile);
-                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-
-                // Trigger async thumbnail render; Model.Status stays Processing until complete.
-                await renderQueue.EnqueueAsync(modelFile.Id, cancellationToken).ConfigureAwait(false);
-
-                uploadResult = new UploadModelResponse(
-                    model.Id,
-                    modelFile.Id,
-                    blobKey,
-                    modelFile.Size,
-                    blobKey);
-
-                break; // Only process the first file part.
+                break; // File part terminates the loop.
             }
             else if (disposition.IsFormDisposition())
             {
@@ -347,39 +349,16 @@ internal static class EndpointRegistration
                 using var sr = new StreamReader(section.Body);
                 var value = await sr.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
 
-                modelName = fieldName?.Equals("name", StringComparison.OrdinalIgnoreCase) == true
-                    ? value
-                    : modelName;
-
-                modelDescription = fieldName?.Equals("description", StringComparison.OrdinalIgnoreCase) == true
-                    ? value
-                    : modelDescription;
-
-                modelSlugOverride = fieldName?.Equals("slug", StringComparison.OrdinalIgnoreCase) == true
-                    ? value
-                    : modelSlugOverride;
+                if (fieldName?.Equals("name", StringComparison.OrdinalIgnoreCase) == true)
+                    modelName = value;
+                else if (fieldName?.Equals("description", StringComparison.OrdinalIgnoreCase) == true)
+                    modelDescription = value;
+                else if (fieldName?.Equals("slug", StringComparison.OrdinalIgnoreCase) == true)
+                    modelSlugOverride = value;
             }
         }
 
-        if (uploadResult is null)
-            return Results.BadRequest("No file part found in multipart body.");
-
-        return Results.Created(
-            $"/api/v1/models/{uploadResult.ModelId}",
-            uploadResult);
-    }
-
-    // Derive a slug from a filename: lowercase, strip extension, replace non-alnum with dash.
-    private static string SlugFromFileName(string fileName)
-    {
-        var name = Path.GetFileNameWithoutExtension(fileName);
-        var chars = name.ToLowerInvariant().ToCharArray();
-        for (var i = 0; i < chars.Length; i++)
-        {
-            if (!char.IsLetterOrDigit(chars[i]))
-                chars[i] = '-';
-        }
-        return new string(chars).Trim('-');
+        return uploadResult ?? Results.BadRequest("No file part found in multipart body.");
     }
 
     // -------------------------------------------------------------------------
@@ -388,6 +367,7 @@ internal static class EndpointRegistration
     // -------------------------------------------------------------------------
     private static async Task<IResult> GetModelThumbnailAsync(
         string slug,
+        HttpContext httpContext,
         [FromServices] ICollectionAuthorizationService authService,
         [FromServices] IUserContext userContext,
         [FromServices] CatalogDbContext db,
@@ -438,7 +418,11 @@ internal static class EndpointRegistration
         }
 
         // 1-hour public cache; thumbnails are content-addressed (key = STL hash) so they
-        // never change for a given slug once rendered.
+        // never change for a given slug once rendered. The value is immutable for the
+        // lifetime of the model file, but we use max-age=3600 as a conservative floor
+        // (wikis may need to invalidate when a model is replaced).
+        httpContext.Response.Headers.CacheControl = "public, max-age=3600, immutable";
+
         return Results.Stream(stream, "image/png", enableRangeProcessing: false);
     }
 

@@ -36,7 +36,7 @@ public static class RenderingInfrastructureExtensions
         services.AddHttpClient<IThumbnailRenderer, SidecarThumbnailRenderer>(client =>
         {
             client.BaseAddress = sidecarBaseUrl;
-            // Render jobs invoke an external process (f3d); allow generous time for large STLs.
+            // stl-thumb is invoked per render job; allow generous time for large STLs.
             client.Timeout = timeout;
         });
 

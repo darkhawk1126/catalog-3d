@@ -1,5 +1,4 @@
 using Catalog3d.Infrastructure.Auth;
-using Catalog3d.Web.Authorization;
 using Microsoft.AspNetCore.Authentication.Cookies;
 
 namespace Catalog3d.Web.Auth;
@@ -87,7 +86,6 @@ internal static class DevAuthServiceRegistration
 
         services.AddDevUserContext();
         services.AddCollectionAuthorization();
-        services.AddCollectionResourceAuthorization();
 
         return services;
     }

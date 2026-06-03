@@ -2,6 +2,7 @@
 @namespace Catalog3d.Web.Blazor.Admin.Pages
 @attribute [Authorize]
 @implements IDisposable
+@using Catalog3d.Application.Abstractions
 
 <PageTitle>Upload — @_collectionName — catalog-3d</PageTitle>
 
@@ -114,7 +115,7 @@ else
     [Inject] IDbContextFactory<CatalogDbContext> DbFactory { get; set; } = null!;
     [Inject] NavigationManager Nav { get; set; } = null!;
     [Inject] IToastService Toast { get; set; } = null!;
-    [Inject] IHttpClientFactory HttpClientFactory { get; set; } = null!;
+    [Inject] IModelUploadService UploadService { get; set; } = null!;
 
     // ---- page state ----
     private Catalog3d.Domain.Entities.Collection? _collection;
@@ -162,11 +163,9 @@ else
     // ---- upload handling ----
 
     /// <summary>
-    /// Called by FluentInputFile once per file (Mode=Stream) with the open IBrowserFile stream.
-    /// We POST the stream as multipart/form-data to the REST endpoint so the server-side
-    /// streaming upload path (MultipartReader → IFileStore → IRenderQueue) handles the write.
-    /// This avoids double-buffering: the Blazor SignalR byte-channel IS the transfer, and
-    /// CopyToAsync from the browser stream feeds directly into the MultipartContent body.
+    /// L10: calls IModelUploadService in-process (per DESIGN) instead of a loopback
+    /// HTTP POST. Surfaces SlugConflict / InvalidContent / TooLarge to the user.
+    /// The stream from FluentInputFile is passed directly to the service; no buffering.
     /// </summary>
     private async Task OnFileUploadedAsync(FluentInputFileEventArgs e)
     {
@@ -179,71 +178,73 @@ else
 
         try
         {
-            // Build multipart body. StreamContent wraps the IBrowserFile stream directly —
-            // no intermediate copy to memory. The HttpClient will read it on the fly.
-            using var form = new MultipartFormDataContent();
-
-            if (!string.IsNullOrWhiteSpace(_modelName))
-                form.Add(new StringContent(_modelName), "name");
-
-            if (!string.IsNullOrWhiteSpace(_modelDescription))
-                form.Add(new StringContent(_modelDescription), "description");
-
-            var streamContent = new StreamContent(e.Stream);
-            streamContent.Headers.ContentType =
-                new System.Net.Http.Headers.MediaTypeHeaderValue(
-                    string.IsNullOrEmpty(e.ContentType) ? "application/octet-stream" : e.ContentType);
-            form.Add(streamContent, "file", e.Name);
-
-            _statusMessage = "Sending to server…";
+            _statusMessage = "Processing…";
             StateHasChanged();
 
-            // Use a named client targeting the same origin. IHttpClientFactory is registered
-            // by default by ASP.NET Core — no additional Program.cs registration needed.
-            // NavigationManager.BaseUri is the server's own origin, so this is an in-process
-            // HTTP call (loopback) that exercises the same REST endpoint external callers use.
-            using var http = HttpClientFactory.CreateClient();
-            http.BaseAddress = new Uri(Nav.BaseUri);
-
-            var url = $"api/v1/collections/{Uri.EscapeDataString(Slug)}/models";
-            using var response = await http.PostAsync(url, form);
-
-            if (response.IsSuccessStatusCode)
+            var request = new ModelUploadRequest
             {
-                var result = await response.Content.ReadFromJsonAsync<UploadResponse>();
-                if (result is not null)
+                CollectionId = _collection!.Id,
+                OwnerId = AuthHelper.UserId,
+                FileStream = e.Stream,
+                FileName = e.Name,
+                ModelName = string.IsNullOrWhiteSpace(_modelName) ? null : _modelName,
+                Description = string.IsNullOrWhiteSpace(_modelDescription) ? null : _modelDescription,
+            };
+
+            var result = await UploadService.UploadAsync(request);
+
+            switch (result)
+            {
+                case ModelUploadResult.Success success:
                 {
-                    // Resolve the model slug so we can poll status and link to the detail page.
-                    await using var db = await DbFactory.CreateDbContextAsync();
-                    var model = await db.Models
-                        .AsNoTracking()
-                        .FirstOrDefaultAsync(m => m.Id == result.ModelId);
+                    var displayName = !string.IsNullOrWhiteSpace(_modelName)
+                        ? _modelName
+                        : Path.GetFileNameWithoutExtension(e.Name);
 
                     var entry = new UploadedEntry
                     {
-                        ModelId = result.ModelId,
-                        FileId = result.FileId,
-                        ModelName = !string.IsNullOrWhiteSpace(_modelName) ? _modelName : Path.GetFileNameWithoutExtension(e.Name),
+                        ModelId = success.Model.Id,
+                        FileId = success.File.Id,
+                        ModelName = displayName,
                         FileName = e.Name,
-                        ModelSlug = model?.Slug ?? string.Empty,
+                        ModelSlug = success.Model.Slug,
                         RenderStatus = "Pending",
                     };
                     _uploads.Insert(0, entry);
-                    Toast.ShowSuccess($"'{entry.ModelName}' uploaded. Rendering thumbnail…");
+                    Toast.ShowSuccess($"'{displayName}' uploaded. Rendering thumbnail…");
 
-                    // Reset form fields for the next upload.
                     _modelName = string.Empty;
                     _modelDescription = string.Empty;
 
-                    // Kick the render-status poller if not already running.
                     EnsurePollRunning();
+                    break;
                 }
-            }
-            else
-            {
-                var body = await response.Content.ReadAsStringAsync();
-                _uploadError = $"Upload failed ({(int)response.StatusCode}): {body}";
-                Toast.ShowError(_uploadError);
+
+                case ModelUploadResult.SlugConflict conflict:
+                    _uploadError = $"A model with slug '{conflict.Slug}' already exists. Rename the file or provide a different model name.";
+                    Toast.ShowError(_uploadError);
+                    break;
+
+                case ModelUploadResult.InvalidSlug invalid:
+                    _uploadError = $"Invalid slug: {invalid.Reason}";
+                    Toast.ShowError(_uploadError);
+                    break;
+
+                case ModelUploadResult.InvalidContent invalid:
+                    _uploadError = $"File rejected: {invalid.Reason}";
+                    Toast.ShowError(_uploadError);
+                    break;
+
+                case ModelUploadResult.TooLarge tooLarge:
+                    var limitMb = tooLarge.LimitBytes / (1024 * 1024);
+                    _uploadError = $"File exceeds the {limitMb} MB upload limit.";
+                    Toast.ShowError(_uploadError);
+                    break;
+
+                default:
+                    _uploadError = "Upload failed for an unexpected reason.";
+                    Toast.ShowError(_uploadError);
+                    break;
             }
         }
         catch (Exception ex)
@@ -290,7 +291,6 @@ else
             {
                 await using var db = await DbFactory.CreateDbContextAsync(ct);
 
-                // Load the primary STL file's RenderStatus for each pending model.
                 var modelIds = pending.Select(e => e.ModelId).ToList();
                 var statuses = await db.ModelFiles
                     .AsNoTracking()
@@ -345,7 +345,4 @@ else
         public string ModelSlug { get; set; } = string.Empty;
         public string RenderStatus { get; set; } = "Pending";
     }
-
-    /// <summary>Wire shape matching UploadModelResponse from the REST endpoint.</summary>
-    private sealed record UploadResponse(Guid ModelId, Guid FileId, string BlobKey, long Size, string Sha256);
 }

@@ -1,7 +1,7 @@
 namespace Catalog3d.Infrastructure.Rendering;
 
 /// <summary>
-/// Configuration for the f3d render sidecar HTTP client and shared-volume path.
+/// Configuration for the stl-thumb render sidecar HTTP client and shared-volume path.
 ///
 /// Configuration section: "RenderSidecar"
 ///

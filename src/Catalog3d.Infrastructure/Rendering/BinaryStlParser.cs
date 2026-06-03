@@ -67,7 +67,16 @@ internal static class BinaryStlParser
                 while (remaining > 0)
                 {
                     // Shift unconsumed bytes to front, then fill.
-                    if (buffered > 0 && offset > 0)
+                    // Reset when buffer is fully drained (buffered == 0) even though
+                    // no copy is needed — offset must be zeroed so the next read lands
+                    // at buffer[0] and vertex reads within the inner loop use the
+                    // correct base. Without this, a drain-to-exactly-zero leaves a
+                    // stale offset that corrupts bounding-box reads for subsequent chunks.
+                    if (buffered == 0)
+                    {
+                        offset = 0;
+                    }
+                    else if (offset > 0)
                     {
                         buffer.AsSpan(offset, buffered).CopyTo(buffer.AsSpan(0, buffered));
                         offset = 0;

@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 namespace Catalog3d.Infrastructure.Rendering;
 
 /// <summary>
-/// Drains the IRenderQueue channel, calls the f3d sidecar for each job, and
+/// Drains the IRenderQueue channel, calls the stl-thumb sidecar for each job, and
 /// updates the DB with Complete / Failed status. On success it also creates the
 /// Thumbnail ModelFile record so the thumbnail endpoint can find it.
 ///
@@ -113,6 +113,18 @@ internal sealed class RenderWorker : BackgroundService
                 return;
             }
 
+            // Idempotency: the reconciler may re-enqueue a file that was completed by a
+            // concurrent worker between the DB scan and the enqueue call. Skip silently
+            // rather than re-rendering and creating a duplicate Thumbnail row.
+            if (stlFile.RenderStatus == RenderStatus.Complete)
+            {
+                _logger.LogInformation(
+                    "ModelFile {ModelFileId} is already Complete; skipping duplicate job {JobId}.",
+                    item.ModelFileId, item.JobId);
+                _queue.SetState(item.JobId, RenderJobState.Complete);
+                return;
+            }
+
             // Mark as processing in DB so a restart knows this job was picked up.
             stlFile.RenderStatus = RenderStatus.Processing;
             stlFile.UpdatedAt = DateTimeOffset.UtcNow;
@@ -128,7 +140,7 @@ internal sealed class RenderWorker : BackgroundService
 
             if (result.Success)
             {
-                await RecordSuccessAsync(db, stlFile, metadata, ct).ConfigureAwait(false);
+                await RecordSuccessAsync(db, fileStore, stlFile, metadata, ct).ConfigureAwait(false);
                 _queue.SetState(item.JobId, RenderJobState.Complete);
                 _logger.LogInformation(
                     "Render complete for ModelFile {ModelFileId} (job {JobId}).",
@@ -212,6 +224,7 @@ internal sealed class RenderWorker : BackgroundService
     // -------------------------------------------------------------------------
     private static async Task RecordSuccessAsync(
         CatalogDbContext db,
+        IFileStore fileStore,
         ModelFile stlFile,
         StlMetadata? metadata,
         CancellationToken ct)
@@ -235,17 +248,27 @@ internal sealed class RenderWorker : BackgroundService
 
         if (!existingThumb)
         {
+            // The sidecar writes the PNG at thumbs/{key[0..2]}/{key}.png. The unique
+            // index is on (ModelId, BlobKey, Kind) so this does not conflict with the
+            // STL row. The thumbnail endpoint calls fileStore.ReadAsync(key+".png", "thumbs").
+            var thumbKey = stlFile.BlobKey + ".png";
+
+            // Stat the PNG to record actual file size. Non-fatal if the file is
+            // momentarily absent — falls back to 0 so the row is still created.
+            long thumbSize = 0;
+            try
+            {
+                thumbSize = await fileStore.SizeAsync(thumbKey, "thumbs", ct).ConfigureAwait(false);
+            }
+            catch (FileNotFoundException) { /* PNG not yet visible; size stays 0 */ }
+
             var thumb = new ModelFile
             {
                 Id = Guid.NewGuid(),
                 ModelId = stlFile.ModelId,
                 Kind = ModelFileKind.Thumbnail,
-                // BlobKey equals the STL blob key — the sidecar writes the PNG at
-                // thumbs/{key[0..2]}/{key}.png. The unique index is on (ModelId, BlobKey, Kind)
-                // so this does not conflict with the STL row. The thumbnail endpoint calls
-                // fileStore.ReadAsync(blobKey + ".png", "thumbs") to reach that path.
                 BlobKey = stlFile.BlobKey,
-                Size = 0,
+                Size = thumbSize,
                 MimeType = "image/png",
                 Sha256 = stlFile.BlobKey,
                 RenderStatus = RenderStatus.Complete,

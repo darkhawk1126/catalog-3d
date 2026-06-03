@@ -51,9 +51,13 @@ internal sealed class OidcUserContext : IUserContext
     // GetClaimsFromUserInfoEndpoint = true causes the handler to expand the JSON array into
     // individual claims, all sharing the claim type "groups". "group:" prefix matches the
     // RoleAssignment.Principal convention for group grants.
+    // M1: normalize to lower-case so matching is genuinely case-insensitive end-to-end.
+    // BuildPrincipalSet uses OrdinalIgnoreCase, but the EF Core IN-clause translates to SQL
+    // where string comparisons depend on collation; storing lower-case values makes the
+    // invariant explicit and independent of DB collation.
     public IReadOnlyList<string> Groups =>
         _user.FindAll("groups")
-             .Select(c => "group:" + c.Value)
+             .Select(c => "group:" + c.Value.ToLowerInvariant())
              .ToList()
              .AsReadOnly();
 }

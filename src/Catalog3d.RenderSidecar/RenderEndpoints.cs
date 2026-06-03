@@ -135,9 +135,20 @@ internal static class RenderEndpoints
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            // Process timeout — kill and report.
-            try { process.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+            // Process timeout — kill and report. The finally block handles the host-
+            // cancellation path (cancellationToken.IsCancellationRequested) so we don't
+            // need to kill here; still return a meaningful result.
             return (-1, string.Empty, $"renderer timed out after {ProcessTimeout.TotalSeconds:F0} s");
+        }
+        finally
+        {
+            // Ensure the process tree is reaped on all exit paths — timeout, host
+            // cancellation (SIGTERM), or unexpected exception. Without this the
+            // stl-thumb child lives on as an orphan after the sidecar shuts down.
+            if (!process.HasExited)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+            }
         }
     }
 

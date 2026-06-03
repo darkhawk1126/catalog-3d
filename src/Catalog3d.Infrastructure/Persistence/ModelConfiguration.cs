@@ -51,10 +51,11 @@ internal sealed class ModelConfiguration : IEntityTypeConfiguration<Model>
             .HasColumnName("updated_at")
             .IsRequired();
 
-        // Slug uniqueness is scoped to the collection: two collections may each have a "base" model.
-        builder.HasIndex(m => new { m.CollectionId, m.Slug })
+        // Slug is a stable, globally unique public identifier (e.g. /models/{slug} for wiki links).
+        // The per-(collection,slug) index is replaced by a global unique index on slug alone.
+        builder.HasIndex(m => m.Slug)
             .IsUnique()
-            .HasDatabaseName("ix_models_collection_slug");
+            .HasDatabaseName("ix_models_slug");
 
         builder.HasMany(m => m.Files)
             .WithOne(f => f.Model)

@@ -259,6 +259,85 @@ public sealed class EndpointAclTests
         Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
     }
+
+    // -------------------------------------------------------------------------
+    // M8: GET /collections/{slug} — 404-invisibility (no-role) and 200 (Preview)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task CollectionDetail_NoRole_Returns404()
+    {
+        // A caller with no role must see 404 — the collection is invisible to them.
+        // This encodes the security cornerstone: deny-by-default, 404 not 403.
+        await using var factory = AclFixture.WithNoRole();
+        var client = factory.CreateClient();
+
+        var response = await client.GetAsync($"/api/v1/collections/{AclFixture.CollectionSlug}");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CollectionDetail_PreviewRole_Returns200()
+    {
+        // Preview-role caller is the minimum tier for collection visibility.
+        await using var factory = AclFixture.WithRole(CollectionRole.Preview);
+        var client = factory.CreateClient();
+
+        var response = await client.GetAsync($"/api/v1/collections/{AclFixture.CollectionSlug}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CollectionDetail_Unauthenticated_Returns401()
+    {
+        await using var factory = AclFixture.Unauthenticated();
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var response = await client.GetAsync($"/api/v1/collections/{AclFixture.CollectionSlug}");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    // -------------------------------------------------------------------------
+    // M8: GET /collections/{slug}/models — 404-invisibility (no-role) and 200 (Preview)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task CollectionModels_NoRole_Returns404()
+    {
+        // Same 404-invisibility rule applies to the models list sub-resource.
+        await using var factory = AclFixture.WithNoRole();
+        var client = factory.CreateClient();
+
+        var response = await client.GetAsync($"/api/v1/collections/{AclFixture.CollectionSlug}/models");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CollectionModels_PreviewRole_Returns200()
+    {
+        // Preview-role caller can list models in the collection.
+        await using var factory = AclFixture.WithRole(CollectionRole.Preview);
+        var client = factory.CreateClient();
+
+        var response = await client.GetAsync($"/api/v1/collections/{AclFixture.CollectionSlug}/models");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CollectionModels_Unauthenticated_Returns401()
+    {
+        await using var factory = AclFixture.Unauthenticated();
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var response = await client.GetAsync($"/api/v1/collections/{AclFixture.CollectionSlug}/models");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
 }
 
 // =============================================================================

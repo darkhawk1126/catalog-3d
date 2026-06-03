@@ -6,6 +6,7 @@ using Catalog3d.Domain.Entities;
 using Catalog3d.Domain.Enums;
 using Catalog3d.Infrastructure.Persistence;
 using Catalog3d.Infrastructure.Storage;
+using Catalog3d.Infrastructure.Upload;
 using Catalog3d.Web.Endpoints.Dto;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
@@ -34,6 +35,12 @@ namespace Catalog3d.Tests;
 ///   6. Unauthenticated: upload rejected with 401.
 ///   7. Upload with explicit name/description fields: Model.Name + Description persisted.
 ///   8. Content-addressing: uploading the same bytes twice returns the same blob key.
+///   9. 201 Created Location header uses the model slug, not the GUID (M2).
+///  10. Response body includes Slug field (M2).
+///  11. Duplicate slug → 409 Conflict (H5, IModelUploadService delegation).
+///  12. Invalid STL content → 400 Bad Request (M11, IModelUploadService delegation).
+///  13. Upload exceeds configured ceiling → 400 with TooLarge reason (M10).
+///  14. Empty-derived slug → 400 Bad Request (H5, before touching storage).
 /// </summary>
 public sealed class Milestone4UploadWiringTests
 {
@@ -226,6 +233,129 @@ public sealed class Milestone4UploadWiringTests
     }
 
     // -------------------------------------------------------------------------
+    // 9. 201 Created Location header uses slug (M2)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Upload_Created_LocationHeaderUsesSlugNotGuid()
+    {
+        await using var fixture = UploadFixture.WithRole(CollectionRole.Uploader);
+        var client = fixture.CreateClient();
+
+        using var content = MinimalStlContent("my-widget.stl");
+        var response = await client.PostAsync(
+            $"/api/v1/collections/{UploadFixture.CollectionSlug}/models", content);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var location = response.Headers.Location?.ToString();
+        Assert.NotNull(location);
+
+        // Location must contain the slug, not a GUID pattern.
+        Assert.Contains("my-widget", location);
+        Assert.DoesNotMatch(@"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", location);
+    }
+
+    // -------------------------------------------------------------------------
+    // 10. Response body includes Slug field (M2)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Upload_Created_ResponseBodyContainsSlug()
+    {
+        await using var fixture = UploadFixture.WithRole(CollectionRole.Uploader);
+        var client = fixture.CreateClient();
+
+        using var content = MinimalStlContent("my-part.stl");
+        var response = await client.PostAsync(
+            $"/api/v1/collections/{UploadFixture.CollectionSlug}/models", content);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var result = await response.Content.ReadFromJsonAsync<UploadModelResponse>();
+        Assert.NotNull(result);
+        Assert.Equal("my-part", result.Slug);
+    }
+
+    // -------------------------------------------------------------------------
+    // 11. Duplicate slug → 409 Conflict (H5)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Upload_DuplicateSlug_Returns409Conflict()
+    {
+        await using var fixture = UploadFixture.WithRole(CollectionRole.Uploader);
+        var client = fixture.CreateClient();
+
+        // First upload succeeds.
+        using var first = MinimalStlContent("dup-model.stl");
+        var r1 = await client.PostAsync(
+            $"/api/v1/collections/{UploadFixture.CollectionSlug}/models", first);
+        Assert.Equal(HttpStatusCode.Created, r1.StatusCode);
+
+        // Second upload with same slug (different bytes to force a new blob).
+        using var second = DifferentStlContent("dup-model.stl");
+        var r2 = await client.PostAsync(
+            $"/api/v1/collections/{UploadFixture.CollectionSlug}/models", second);
+
+        Assert.Equal(HttpStatusCode.Conflict, r2.StatusCode);
+    }
+
+    // -------------------------------------------------------------------------
+    // 12. Invalid STL content → 400 Bad Request (M11)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Upload_InvalidStlContent_Returns400()
+    {
+        await using var fixture = UploadFixture.WithRole(CollectionRole.Uploader);
+        var client = fixture.CreateClient();
+
+        // 10 bytes — too short to be a valid binary STL (needs ≥ 84).
+        using var content = RawBytesContent(new byte[10], "garbage.stl");
+        var response = await client.PostAsync(
+            $"/api/v1/collections/{UploadFixture.CollectionSlug}/models", content);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    // -------------------------------------------------------------------------
+    // 13. Upload exceeds ceiling → 400 (M10)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Upload_ExceedsSizeCeiling_Returns400()
+    {
+        // Configure a 50-byte ceiling; the minimal STL (84+50=134 bytes) exceeds it.
+        await using var fixture = UploadFixture.WithRoleAndMaxBytes(CollectionRole.Uploader, maxBytes: 50);
+        var client = fixture.CreateClient();
+
+        using var content = MinimalStlContent("big.stl");
+        var response = await client.PostAsync(
+            $"/api/v1/collections/{UploadFixture.CollectionSlug}/models", content);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    // -------------------------------------------------------------------------
+    // 14. Empty slug → 400 Bad Request (H5)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Upload_EmptyDerivedSlug_Returns400()
+    {
+        await using var fixture = UploadFixture.WithRole(CollectionRole.Uploader);
+        var client = fixture.CreateClient();
+
+        // Filename "----.stl" produces an empty slug after trimming dashes.
+        using var content = MinimalStlContent("----.stl");
+        var response = await client.PostAsync(
+            $"/api/v1/collections/{UploadFixture.CollectionSlug}/models", content);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
@@ -260,6 +390,27 @@ public sealed class Milestone4UploadWiringTests
         var multipart = new MultipartFormDataContent();
         multipart.Add(new StringContent(modelName), "name");
         multipart.Add(new StringContent(description), "description");
+        var fileContent = new ByteArrayContent(bytes);
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        multipart.Add(fileContent, "file", fileName);
+        return multipart;
+    }
+
+    // Different valid STL bytes (2 triangles) so blob key differs from MinimalStlContent.
+    private MultipartFormDataContent DifferentStlContent(string fileName)
+    {
+        var buf = new byte[84 + 100];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(buf.AsSpan(80, 4), 2u);
+        var multipart = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(buf);
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        multipart.Add(fileContent, "file", fileName);
+        return multipart;
+    }
+
+    private static MultipartFormDataContent RawBytesContent(byte[] bytes, string fileName)
+    {
+        var multipart = new MultipartFormDataContent();
         var fileContent = new ByteArrayContent(bytes);
         fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
         multipart.Add(fileContent, "file", fileName);
@@ -300,13 +451,19 @@ internal sealed class UploadFixture : WebApplicationFactory<Program>, IAsyncDisp
     private readonly string _dbName = $"upload-{Guid.NewGuid():N}";
     private readonly string _storageRoot;
     private readonly IRenderQueue? _renderQueue;
+    private readonly long? _maxBytesOverride;
     private Action<CatalogDbContext>? _seedRoleAction;
 
-    private UploadFixture(IUserContext userContext, bool isAuthenticated, IRenderQueue? renderQueue = null)
+    private UploadFixture(
+        IUserContext userContext,
+        bool isAuthenticated,
+        IRenderQueue? renderQueue = null,
+        long? maxBytesOverride = null)
     {
         _userContext = userContext;
         _isAuthenticated = isAuthenticated;
         _renderQueue = renderQueue;
+        _maxBytesOverride = maxBytesOverride;
         _storageRoot = Path.Combine(Path.GetTempPath(), $"upload-store-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_storageRoot);
     }
@@ -328,6 +485,19 @@ internal sealed class UploadFixture : WebApplicationFactory<Program>, IAsyncDisp
     {
         var ctx = new UploadStubUserContext("user:uploader-tester");
         var fixture = new UploadFixture(ctx, isAuthenticated: true, renderQueue: queue);
+        fixture._seedRoleAction = db => db.RoleAssignments.Add(new RoleAssignment
+        {
+            CollectionId = CollectionId,
+            Principal = "user:uploader-tester",
+            Role = role,
+        });
+        return fixture;
+    }
+
+    internal static UploadFixture WithRoleAndMaxBytes(CollectionRole role, long maxBytes)
+    {
+        var ctx = new UploadStubUserContext("user:uploader-tester");
+        var fixture = new UploadFixture(ctx, isAuthenticated: true, maxBytesOverride: maxBytes);
         fixture._seedRoleAction = db => db.RoleAssignments.Add(new RoleAssignment
         {
             CollectionId = CollectionId,
@@ -370,6 +540,17 @@ internal sealed class UploadFixture : WebApplicationFactory<Program>, IAsyncDisp
             // Point DiskFileStore at our temp directory.
             var root = _storageRoot;
             services.Configure<DiskFileStoreOptions>(o => o.Root = root);
+
+            // Register the shared upload service so the endpoint can delegate to it.
+            // Program.cs registers this in production; fixtures must wire it explicitly.
+            services.AddScoped<IModelUploadService, Catalog3d.Infrastructure.Upload.ModelUploadService>();
+
+            // Apply per-test size ceiling before the service reads options.
+            if (_maxBytesOverride.HasValue)
+            {
+                var ceiling = _maxBytesOverride.Value;
+                services.Configure<ModelUploadOptions>(o => o.MaxSizeBytes = ceiling);
+            }
 
             // Stub user context.
             services.RemoveAll<IUserContext>();

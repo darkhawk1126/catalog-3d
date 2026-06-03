@@ -1,5 +1,4 @@
 using Catalog3d.Infrastructure.Auth;
-using Catalog3d.Web.Authorization;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -97,7 +96,6 @@ internal static class OidcAuthServiceRegistration
 
         services.AddOidcUserContext();
         services.AddCollectionAuthorization();
-        services.AddCollectionResourceAuthorization();
 
         return services;
     }

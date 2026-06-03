@@ -9,28 +9,18 @@ using Microsoft.Extensions.Options;
 namespace Catalog3d.Tests;
 
 /// <summary>
-/// Milestone-4 tests: admin gating for collection create/manage operations.
+/// Admin gating tests for collection create/manage operations.
 ///
-/// These tests validate the authorization rules enforced by AdminAuthHelper /
-/// ICollectionAuthorizationService that back the Blazor page guards documented
-/// in the milestone-4 contract:
+/// These tests validate the authorization rules enforced by ICollectionAuthorizationService
+/// that back the Blazor page guards:
 ///
 ///   - CollectionCreate and CollectionList "New" button: site-admin only.
 ///   - CollectionEdit, CollectionRoles: collection-Admin or site-admin.
 ///   - Non-admin callers navigated away (guard blocks access).
 ///
-/// The tests run directly against ICollectionAuthorizationService with the
-/// InMemory database — no Blazor or HTTP round-trip required to validate the
-/// authorization semantics.
-///
-/// Coverage:
-///   1. Site-admin (in SiteAdminGroups) can create collections (IsSiteAdmin = true).
-///   2. Non-site-admin cannot create collections (IsSiteAdmin = false).
-///   3. Collection-Admin can reach CollectionEdit / CollectionRoles.
-///   4. Preview-only caller cannot reach CollectionEdit / CollectionRoles.
-///   5. Site-admin is implicitly collection-Admin even without a RoleAssignment row.
-///   6. Uploader is NOT collection-Admin (Uploader &lt; Admin).
-///   7. Unauthenticated caller is never site-admin or collection-admin.
+/// L5: IsSiteAdmin is now routed through the real ICollectionAuthorizationService so the
+/// test covers the actual production code path rather than a local reimplementation.
+/// L6: Stale Milestone-2/WILL-FAIL annotations removed; these tests are all green.
 /// </summary>
 public sealed class Milestone4AdminGatingTests
 {
@@ -85,27 +75,23 @@ public sealed class Milestone4AdminGatingTests
     }
 
     // -------------------------------------------------------------------------
-    // Helper that mirrors the IsSiteAdmin guard in AdminAuthHelper.
-    // Groups uses the "group:" prefix convention from ClaimsPrincipalUserContext.
-    // CatalogAuthorizationOptions.SiteAdminGroups stores bare names.
-    // The service's IsSiteAdmin strips "group:" before comparing.
+    // L5: IsSiteAdmin routed through the real service (GetEffectiveRoleAsync with
+    // a sentinel collection ID that will never have a DB row). The site-admin
+    // short-circuit in CollectionAuthorizationService returns Admin without a DB
+    // lookup when any of the caller's groups matches SiteAdminGroups config.
     // -------------------------------------------------------------------------
 
-    private static bool IsSiteAdmin(IUserContext caller)
+    private static async Task<bool> IsSiteAdminViaService(IUserContext caller)
     {
-        // This is the same logic CollectionAuthorizationService uses internally.
-        // Replicated here to test the gating contract independently of AdminAuthHelper's
-        // ClaimsPrincipal dependency (which requires AuthenticationStateProvider wiring).
-        var siteAdminGroups = new[] { "admins" };
-        foreach (var group in caller.Groups)
-        {
-            var name = group.StartsWith("group:", StringComparison.OrdinalIgnoreCase)
-                ? group[6..]
-                : group;
-            if (siteAdminGroups.Contains(name, StringComparer.OrdinalIgnoreCase))
-                return true;
-        }
-        return false;
+        await using var db = new CatalogDbContext(
+            new DbContextOptionsBuilder<CatalogDbContext>()
+                .UseInMemoryDatabase($"is-sa-{Guid.NewGuid():N}")
+                .Options);
+
+        var svc = BuildService(db);
+        // No collection seeded → any return of Admin must come from the site-admin short-circuit
+        var sentinelId = Guid.NewGuid();
+        return await svc.AuthorizeAsync(sentinelId, caller, CollectionRole.Admin);
     }
 
     // -------------------------------------------------------------------------
@@ -113,10 +99,10 @@ public sealed class Milestone4AdminGatingTests
     // -------------------------------------------------------------------------
 
     [Fact]
-    public void SiteAdmin_IsSiteAdmin_ReturnsTrue()
+    public async Task SiteAdmin_IsSiteAdmin_ReturnsTrue()
     {
         var caller = new FakeUser("user:sub-admin", ["group:admins"]);
-        Assert.True(IsSiteAdmin(caller));
+        Assert.True(await IsSiteAdminViaService(caller));
     }
 
     // -------------------------------------------------------------------------
@@ -124,17 +110,17 @@ public sealed class Milestone4AdminGatingTests
     // -------------------------------------------------------------------------
 
     [Fact]
-    public void NonSiteAdmin_IsSiteAdmin_ReturnsFalse()
+    public async Task NonSiteAdmin_IsSiteAdmin_ReturnsFalse()
     {
         var caller = new FakeUser("user:sub-media", ["group:media"]);
-        Assert.False(IsSiteAdmin(caller));
+        Assert.False(await IsSiteAdminViaService(caller));
     }
 
     [Fact]
-    public void UserWithNoGroups_IsSiteAdmin_ReturnsFalse()
+    public async Task UserWithNoGroups_IsSiteAdmin_ReturnsFalse()
     {
         var caller = new FakeUser("user:sub-solo", []);
-        Assert.False(IsSiteAdmin(caller));
+        Assert.False(await IsSiteAdminViaService(caller));
     }
 
     // -------------------------------------------------------------------------
@@ -239,9 +225,9 @@ public sealed class Milestone4AdminGatingTests
     // -------------------------------------------------------------------------
 
     [Fact]
-    public void Unauthenticated_IsSiteAdmin_ReturnsFalse()
+    public async Task Unauthenticated_IsSiteAdmin_ReturnsFalse()
     {
-        Assert.False(IsSiteAdmin(new UnauthUser()));
+        Assert.False(await IsSiteAdminViaService(new UnauthUser()));
     }
 
     [Fact]

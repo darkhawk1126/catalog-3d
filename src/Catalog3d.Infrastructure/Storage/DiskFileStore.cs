@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using Catalog3d.Application.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -16,6 +17,10 @@ internal sealed class DiskFileStore : IFileStore
 {
     // 80 KiB — large enough to keep copy loops tight without pressuring LOH (85 KB threshold).
     private const int CopyBufferSize = 80 * 1024;
+
+    // Accepts 64-char hex keys (STL blobs) or 64-char hex + ".png" (thumbnail blobs).
+    private static readonly Regex ValidKeyPattern =
+        new(@"^[0-9a-f]{64}(\.png)?$", RegexOptions.Compiled, TimeSpan.FromMilliseconds(100));
 
     private readonly DiskFileStoreOptions _options;
 
@@ -52,16 +57,11 @@ internal sealed class DiskFileStore : IFileStore
         string finalDir = Path.GetDirectoryName(finalPath)!;
         Directory.CreateDirectory(finalDir);
 
-        if (File.Exists(finalPath))
-        {
-            // Dedup: identical content already stored.
-            TryDeleteFile(tmpPath);
-        }
-        else
-        {
-            // Atomic rename — POSIX guarantees atomicity on same filesystem.
-            File.Move(tmpPath, finalPath, overwrite: false);
-        }
+        // Content-addressed: overwrite is safe because any two files with the same SHA-256
+        // key are byte-identical. Using overwrite:true closes the TOCTOU window where a
+        // concurrent write of the same content could leave the temp file on disk if the
+        // exists-check races with another writer's Move.
+        File.Move(tmpPath, finalPath, overwrite: true);
 
         return sha256Hex;
     }
@@ -111,6 +111,20 @@ internal sealed class DiskFileStore : IFileStore
         return Task.CompletedTask;
     }
 
+    /// <inheritdoc/>
+    public Task<long> SizeAsync(
+        string key,
+        string blobSubDirectory,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        string path = BlobPath(blobSubDirectory, key);
+        var info = new FileInfo(path);
+        if (!info.Exists)
+            throw new FileNotFoundException($"Blob not found: {key}", path);
+        return Task.FromResult(info.Length);
+    }
+
     // --- helpers ---
 
     private string SubDir(string blobSubDirectory) =>
@@ -118,6 +132,12 @@ internal sealed class DiskFileStore : IFileStore
 
     private string BlobPath(string blobSubDirectory, string key)
     {
+        // Defense-in-depth: keys are always server-derived SHA-256 hashes, but validate
+        // anyway so a bug or future code path cannot escape the storage root.
+        if (!ValidKeyPattern.IsMatch(key))
+            throw new ArgumentException(
+                $"Invalid blob key '{key}': must match ^[0-9a-f]{{64}}(\\.png)?$.", nameof(key));
+
         // Two-char prefix shard mirrors git's object store: limits directory entry counts.
         string prefix = key[..2];
         return Path.Combine(_options.Root, blobSubDirectory, prefix, key);

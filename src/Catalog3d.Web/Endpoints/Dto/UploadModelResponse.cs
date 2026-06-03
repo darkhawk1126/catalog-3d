@@ -4,6 +4,7 @@ namespace Catalog3d.Web.Endpoints.Dto;
 public sealed record UploadModelResponse(
     Guid ModelId,
     Guid FileId,
+    string Slug,
     string BlobKey,
     long Size,
     string Sha256);

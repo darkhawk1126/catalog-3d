@@ -145,7 +145,17 @@ else
 
         if (_collection is null)
         {
-            Nav.NavigateTo("/collections");
+            _loading = false;
+            return;
+        }
+
+        // H1: gate on Preview — callers without at least Preview see the same not-found
+        // state as a missing collection (404-invisibility, mirrors ModelDetail.razor).
+        bool hasPreview = await AuthHelper.HasCollectionRoleAsync(_collection.Id, CollectionRole.Preview);
+        if (!hasPreview)
+        {
+            _collection = null;
+            _loading = false;
             return;
         }
 

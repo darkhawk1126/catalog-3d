@@ -1,7 +1,7 @@
 namespace Catalog3d.Application.Abstractions;
 
 /// <summary>
-/// Enqueues render jobs dispatched to the f3d sidecar. M1 stub — the sidecar
+/// Enqueues render jobs dispatched to the stl-thumb sidecar. M1 stub — the sidecar
 /// integration is wired in milestone 3.
 /// </summary>
 public interface IRenderQueue

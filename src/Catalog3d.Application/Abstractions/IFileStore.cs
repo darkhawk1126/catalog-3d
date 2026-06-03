@@ -20,4 +20,10 @@ public interface IFileStore
 
     /// <summary>Permanently removes a blob. No-op if the key does not exist.</summary>
     Task DeleteAsync(string key, string blobSubDirectory, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns the byte length of the stored blob identified by <paramref name="key"/>.
+    /// Throws <see cref="FileNotFoundException"/> when the blob does not exist.
+    /// </summary>
+    Task<long> SizeAsync(string key, string blobSubDirectory, CancellationToken ct = default);
 }

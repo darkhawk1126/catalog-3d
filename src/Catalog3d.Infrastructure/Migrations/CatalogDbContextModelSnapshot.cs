@@ -113,9 +113,9 @@ namespace Catalog3d.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("CollectionId", "Slug")
+                    b.HasIndex("Slug")
                         .IsUnique()
-                        .HasDatabaseName("ix_models_collection_slug");
+                        .HasDatabaseName("ix_models_slug");
 
                     b.ToTable("models", (string)null);
                 });

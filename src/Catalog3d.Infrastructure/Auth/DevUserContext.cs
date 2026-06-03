@@ -29,9 +29,12 @@ internal sealed class DevUserContext : IUserContext
     public string DisplayName =>
         _user.FindFirstValue(ClaimTypes.Name) ?? string.Empty;
 
+    // M1: normalize to lower-case so principal matching is case-insensitive end-to-end.
+    // Dev config may use mixed-case group names; normalize here to match the convention
+    // that OIDC and RoleAssignment rows use.
     public IReadOnlyList<string> Groups =>
         _user.FindAll(DevAuthHandler.GroupsClaimType)
-             .Select(c => c.Value)
+             .Select(c => c.Value.ToLowerInvariant())
              .ToList()
              .AsReadOnly();
 }

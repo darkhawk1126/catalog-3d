@@ -176,6 +176,54 @@ public sealed class StlParserTests
     }
 
     // -------------------------------------------------------------------------
+    // 6. Multi-chunk read that drains buffer to exactly zero (H4 regression)
+    //
+    // The parser's shift-to-front guard is `if (buffered > 0 && offset > 0)`.
+    // When the inner loop drains the buffer to exactly 0, `offset` is non-zero
+    // but the guard fires false — `offset` is never reset. On the next outer
+    // iteration a fresh read fills `buffer[0..]` but vertex reads use the stale
+    // `offset` → wrong bounding-box coordinates.
+    //
+    // Force the scenario with a throttled stream that delivers exactly one
+    // triangle stride (50 bytes) per ReadAsync call. With 3 distinct triangles
+    // the inner loop drains to 0 after each, exercising the buggy path twice.
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task ParseAsync_MultiChunkReadDrainingToZero_CorrectBoundingBox()
+    {
+        // Three triangles with well-separated vertices so a wrong offset
+        // would produce an obviously wrong bounding box.
+        // Triangle 1: all vertices at y=0 plane, x=[0,1], z=[0,0]
+        // Triangle 2: all vertices at y=10 plane, x=[20,21], z=[5,5]
+        // Triangle 3: all vertices at negative coords
+        var triangles = new Triangle[]
+        {
+            new((0f, 0f, 1f), (0f, 0f, 0f),  (1f, 0f, 0f),  (0f, 0f, 0f)),
+            new((0f, 0f, 1f), (20f, 10f, 5f), (21f, 10f, 5f), (20f, 10f, 5f)),
+            new((0f, 0f, 1f), (-5f, -3f, -2f), (-4f, -3f, -2f), (-5f, -3f, -2f)),
+        };
+        var stl = BuildBinaryStl(triangles);
+
+        // One-stride-at-a-time stream forces the outer loop to iterate once per
+        // triangle and drains buffered to 0 after each inner-loop pass.
+        using var stream = new ThrottledStream(stl, chunkSize: 50);
+        var result = await BinaryStlParser.ParseAsync(stream, CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(3, result.Value.TriCount);
+
+        var bbox = ParseBoundingBox(result.Value.BoundingBoxJson);
+
+        Assert.Equal(-5.0, bbox.MinX, precision: 5);
+        Assert.Equal(-3.0, bbox.MinY, precision: 5);
+        Assert.Equal(-2.0, bbox.MinZ, precision: 5);
+        Assert.Equal(21.0, bbox.MaxX, precision: 5);
+        Assert.Equal(10.0, bbox.MaxY, precision: 5);
+        Assert.Equal(5.0,  bbox.MaxZ, precision: 5);
+    }
+
+    // -------------------------------------------------------------------------
     // 6. BoundingBox JSON structure validation
     // -------------------------------------------------------------------------
 
@@ -260,5 +308,47 @@ public sealed class StlParserTests
         return new BBox(
             min[0].GetDouble(), min[1].GetDouble(), min[2].GetDouble(),
             max[0].GetDouble(), max[1].GetDouble(), max[2].GetDouble());
+    }
+
+    /// <summary>
+    /// Wraps a byte array and returns at most <paramref name="chunkSize"/> bytes per
+    /// ReadAsync call. Forces the parser into multi-iteration outer-loop paths.
+    /// </summary>
+    private sealed class ThrottledStream(byte[] data, int chunkSize) : Stream
+    {
+        private int _position;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => _position;
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (_position >= data.Length) return 0;
+            int toCopy = Math.Min(Math.Min(count, chunkSize), data.Length - _position);
+            data.AsSpan(_position, toCopy).CopyTo(buffer.AsSpan(offset, toCopy));
+            _position += toCopy;
+            return toCopy;
+        }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            if (_position >= data.Length) return new ValueTask<int>(0);
+            int toCopy = Math.Min(Math.Min(buffer.Length, chunkSize), data.Length - _position);
+            data.AsSpan(_position, toCopy).CopyTo(buffer.Span);
+            _position += toCopy;
+            return new ValueTask<int>(toCopy);
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }

@@ -1,13 +1,16 @@
 using System.Net;
 using System.Net.Http.Json;
+using Catalog3d.Application.Abstractions;
 using Catalog3d.Domain.Entities;
 using Catalog3d.Domain.Enums;
 using Catalog3d.Infrastructure.Persistence;
+using Catalog3d.Infrastructure.Storage;
 using Catalog3d.Web.Endpoints.Dto;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 
 namespace Catalog3d.Tests;
@@ -73,6 +76,173 @@ public sealed class CollectionsEndpointTests : IClassFixture<CollectionsSmokeFix
 
         // RequireAuthorization() returns 401 for unauthenticated requests.
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+}
+
+/// <summary>
+/// Focused fixture for upload-response field and Location header tests (M2).
+/// Uses an isolated fixture so upload can be exercised without affecting smoke tests.
+/// </summary>
+public sealed class UploadResponseFieldTests : IAsyncLifetime
+{
+    private UploadResponseFixture? _fixture;
+
+    public async Task InitializeAsync()
+    {
+        _fixture = new UploadResponseFixture();
+        await Task.CompletedTask;
+    }
+
+    public async Task DisposeAsync()
+    {
+        if (_fixture is not null)
+            await _fixture.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Upload_LocationHeader_ContainsSlugNotGuid()
+    {
+        var client = _fixture!.CreateAuthenticatedClient("admin");
+
+        using var content = BuildMinimalStlContent("slug-test.stl");
+        var response = await client.PostAsync(
+            $"/api/v1/collections/{UploadResponseFixture.CollectionSlug}/models", content);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var location = response.Headers.Location?.ToString();
+        Assert.NotNull(location);
+        Assert.Contains("slug-test", location);
+        Assert.DoesNotMatch(@"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", location);
+    }
+
+    [Fact]
+    public async Task Upload_ResponseBody_HasSlugField()
+    {
+        var client = _fixture!.CreateAuthenticatedClient("admin");
+
+        using var content = BuildMinimalStlContent("my-model.stl");
+        var response = await client.PostAsync(
+            $"/api/v1/collections/{UploadResponseFixture.CollectionSlug}/models", content);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var result = await response.Content.ReadFromJsonAsync<UploadModelResponse>();
+        Assert.NotNull(result);
+        Assert.False(string.IsNullOrEmpty(result.Slug));
+        Assert.Equal("my-model", result.Slug);
+    }
+
+    private static MultipartFormDataContent BuildMinimalStlContent(string fileName)
+    {
+        var buf = new byte[84 + 50];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(buf.AsSpan(80, 4), 1u);
+        var multipart = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(buf);
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        multipart.Add(fileContent, "file", fileName);
+        return multipart;
+    }
+}
+
+/// <summary>
+/// Fixture for upload-field tests. Seeds one collection with admin having Uploader role,
+/// provides a real DiskFileStore in a temp dir, and registers IModelUploadService.
+/// </summary>
+public sealed class UploadResponseFixture : WebApplicationFactory<Program>, IAsyncDisposable
+{
+    public static readonly Guid CollectionId = new("bbbbbbbb-0000-0000-0000-000000000001");
+    public const string CollectionSlug = "upload-field-test";
+
+    private readonly string _dbName = $"upload-field-{Guid.NewGuid():N}";
+    private readonly string _storageRoot;
+
+    public UploadResponseFixture()
+    {
+        _storageRoot = Path.Combine(Path.GetTempPath(), $"upload-field-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_storageRoot);
+    }
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        builder.UseEnvironment("Development");
+
+        builder.ConfigureServices(services =>
+        {
+            for (var i = services.Count - 1; i >= 0; i--)
+            {
+                if (services[i].ServiceType == typeof(DbContextOptions<CatalogDbContext>))
+                    services.RemoveAt(i);
+            }
+
+            var dbOpts = new DbContextOptionsBuilder<CatalogDbContext>()
+                .UseInMemoryDatabase(_dbName)
+                .Options;
+            services.AddSingleton(dbOpts);
+
+            var root = _storageRoot;
+            services.Configure<DiskFileStoreOptions>(o => o.Root = root);
+
+            // The upload endpoint delegates to IModelUploadService; register it here
+            // since Program.cs registers it in production but not in the test host.
+            services.AddScoped<IModelUploadService, Catalog3d.Infrastructure.Upload.ModelUploadService>();
+
+            services.RemoveAll<IHostedService>();
+        });
+    }
+
+    protected override IHost CreateHost(IHostBuilder builder)
+    {
+        var host = base.CreateHost(builder);
+
+        using var scope = host.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+        SeedTestData(db);
+
+        return host;
+    }
+
+    public HttpClient CreateAuthenticatedClient(string username)
+    {
+        var client = CreateClient();
+        client.DefaultRequestHeaders.Add("X-Dev-User", username);
+        return client;
+    }
+
+    private static void SeedTestData(CatalogDbContext db)
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        db.Collections.Add(new Collection
+        {
+            Id = CollectionId,
+            Slug = CollectionSlug,
+            Name = "Upload Field Test",
+            Description = "",
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+
+        // admin user gets Uploader role so they can post.
+        db.RoleAssignments.Add(new RoleAssignment
+        {
+            CollectionId = CollectionId,
+            Principal = "admin",
+            Role = CollectionRole.Uploader,
+        });
+
+        db.SaveChanges();
+    }
+
+    async ValueTask IAsyncDisposable.DisposeAsync()
+    {
+        Dispose();
+        if (Directory.Exists(_storageRoot))
+        {
+            try { Directory.Delete(_storageRoot, recursive: true); }
+            catch (IOException) { }
+        }
+        await ValueTask.CompletedTask;
     }
 }
 

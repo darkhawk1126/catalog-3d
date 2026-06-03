@@ -257,17 +257,9 @@ public sealed class CollectionAuthorizationServiceTests
 
     // -------------------------------------------------------------------------
     // 6. SiteAdminGroups bootstrap — Admin everywhere without a DB row.
-    //
-    // These tests verify the contract the downstream authorization agent must
-    // implement. They WILL FAIL until CollectionAuthorizationService (or a
-    // decorator around it) reads IOptions<CatalogAuthorizationOptions> and
-    // short-circuits to Admin when the caller's Groups contains a SiteAdminGroups
-    // entry. The tests are written against the expected post-implementation
-    // behavior so they become green after that agent runs.
     // -------------------------------------------------------------------------
 
     [Fact]
-    [Trait("Milestone", "2-SiteAdminGroups")]
     public async Task GetEffectiveRole_SiteAdminGroup_ReturnsAdminWithoutDbRow()
     {
         await using var db = CreateDb();
@@ -288,7 +280,6 @@ public sealed class CollectionAuthorizationServiceTests
     }
 
     [Fact]
-    [Trait("Milestone", "2-SiteAdminGroups")]
     public async Task GetEffectiveRole_SiteAdminGroup_UnrelatedCollection_ReturnsAdmin()
     {
         await using var db = CreateDb();
@@ -304,7 +295,6 @@ public sealed class CollectionAuthorizationServiceTests
     }
 
     [Fact]
-    [Trait("Milestone", "2-SiteAdminGroups")]
     public async Task GetAuthorizedCollectionIds_SiteAdminGroup_ReturnsAllCollections()
     {
         await using var db = CreateDb();
@@ -329,7 +319,6 @@ public sealed class CollectionAuthorizationServiceTests
     }
 
     [Fact]
-    [Trait("Milestone", "2-SiteAdminGroups")]
     public async Task GetEffectiveRole_NonSiteAdminGroup_NullWhenNoDbRow()
     {
         // "media" group is NOT in SiteAdminGroups; without a DB row they get null.

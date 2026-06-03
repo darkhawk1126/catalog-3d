@@ -171,7 +171,9 @@ else
     {
         _addError = string.Empty;
 
-        var principal = _newPrincipal.Trim();
+        // M1: normalize to lower-case at write so DB rows are consistently cased,
+        // making the EF IN-clause match independent of column collation.
+        var principal = _newPrincipal.Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(principal))
         {
             _addError = "Principal is required.";
