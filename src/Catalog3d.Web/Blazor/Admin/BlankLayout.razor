@@ -1,0 +1,12 @@
+@inherits LayoutComponentBase
+@namespace Catalog3d.Web.Blazor.Admin
+
+@* Minimal layout used by pages that must not render the admin chrome (e.g. the dev login page).
+   Still includes FluentDesignTheme so the dark tokens are available for the login panel. *@
+
+@Body
+
+<FluentDesignTheme Mode="DesignThemeModes.Dark"
+                   CustomColor="#E8792A"
+                   NeutralBaseColor="#1A1D21"
+                   StorageName="catalog3d-theme" />

@@ -1,4 +1,5 @@
 @page "/login/dev"
+@layout BlankLayout
 @namespace Catalog3d.Web.Blazor.Admin.Pages
 @inject IConfiguration Configuration
 @inject NavigationManager Nav
@@ -16,50 +17,87 @@
 @if (_isOidc)
 {
     <PageTitle>Sign In — catalog-3d</PageTitle>
-    <FluentLabel Typo="Typography.H4">Sign In</FluentLabel>
-    <p>OIDC mode is active. <FluentAnchor Href="/challenge">Sign in with Authelia</FluentAnchor></p>
+    <div class="c3d-login-root">
+        <div class="c3d-login-panel">
+            <div class="c3d-login-brand">
+                <div class="c3d-login-brand-icon">
+                    <FluentIcon Value="@(new Size24.Cube())" />
+                </div>
+                <h1 class="c3d-login-title">
+                    <span>catalog</span><span style="color: var(--c3d-accent);">·3d</span>
+                </h1>
+            </div>
+            <p style="text-align: center; color: var(--neutral-foreground-hint); margin: 0; font-size: 0.9rem;">
+                OIDC mode is active.
+                <FluentAnchor Href="/challenge">Sign in with Authelia</FluentAnchor>
+            </p>
+        </div>
+    </div>
 }
 else
 {
-    <PageTitle>Sign In (Dev) — catalog-3d</PageTitle>
+    <PageTitle>Sign In — catalog-3d</PageTitle>
 
-    <div class="login-card">
-        <FluentLabel Typo="Typography.H4">Developer Sign In</FluentLabel>
-        <p class="login-hint">Select a dev user from <code>DevUsers:Users</code> to establish a session cookie.</p>
+    <div class="c3d-login-root">
+        <div class="c3d-login-panel">
 
-        @if (_errorMessage is not null)
-        {
-            <FluentMessageBar Intent="MessageIntent.Error">@_errorMessage</FluentMessageBar>
-        }
-
-        @if (_devUsers.Count == 0)
-        {
-            <FluentMessageBar Intent="MessageIntent.Warning">
-                No dev users configured in <code>DevUsers:Users</code>.
-            </FluentMessageBar>
-        }
-        else
-        {
-            @* Plain HTML form so submission works before the Blazor circuit is active.
-               Native <select> posts the selected option value as the form field. *@
-            <form method="post" action="/auth/dev-login">
-                <input type="hidden" name="returnUrl" value="@_returnUrl" />
-
-                <div class="field-row">
-                    <label for="dev-user-select" class="field-label">Sign in as</label>
-                    <select id="dev-user-select" name="username" class="dev-select">
-                        @foreach (var user in _devUsers)
-                        {
-                            <option value="@user.Key">@user.Value (@user.Key)</option>
-                        }
-                    </select>
+            @* Brand block *@
+            <div class="c3d-login-brand">
+                <div class="c3d-login-brand-icon">
+                    <FluentIcon Value="@(new Size24.Cube())" />
                 </div>
+                <div>
+                    <div class="c3d-wordmark" style="font-size: 1.375rem; justify-content: center;">
+                        <span class="c3d-wordmark-catalog">catalog</span>
+                        <span class="c3d-wordmark-sep">·</span>
+                        <span class="c3d-wordmark-3d">3d</span>
+                    </div>
+                    <p class="c3d-login-subtitle">Admin Console</p>
+                </div>
+                <span class="c3d-login-env-badge">dev environment</span>
+            </div>
 
-                @* Native submit button — web component buttons do not reliably trigger
-                   native HTML form submission in all browsers. Style matches Fluent accent. *@
-                <button type="submit" class="signin-btn">Sign In</button>
-            </form>
-        }
+            <div class="c3d-login-divider"></div>
+
+            @if (_errorMessage is not null)
+            {
+                <FluentMessageBar Intent="MessageIntent.Error">@_errorMessage</FluentMessageBar>
+            }
+
+            @if (_devUsers.Count == 0)
+            {
+                <FluentMessageBar Intent="MessageIntent.Warning">
+                    No dev users configured in <code>DevUsers:Users</code>.
+                </FluentMessageBar>
+            }
+            else
+            {
+                @* Plain HTML form so submission works before the Blazor circuit is active.
+                   Native <select> posts the selected option value as the form field. *@
+                <form method="post" action="/auth/dev-login" class="login-form">
+                    <input type="hidden" name="returnUrl" value="@_returnUrl" />
+
+                    <div class="field-row">
+                        <label for="dev-user-select" class="field-label">Sign in as</label>
+                        <select id="dev-user-select" name="username" class="dev-select">
+                            @foreach (var user in _devUsers)
+                            {
+                                <option value="@user.Key">@user.Value (@user.Key)</option>
+                            }
+                        </select>
+                        <span class="field-hint">Select a user from <code>DevUsers:Users</code></span>
+                    </div>
+
+                    <button type="submit" class="signin-btn">
+                        Sign In
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                            <path d="M3.5 8a.5.5 0 0 1 .5-.5h6.793L8.146 4.854a.5.5 0 1 1 .708-.708l4 4a.5.5 0 0 1 0 .708l-4 4a.5.5 0 0 1-.708-.708L10.793 8.5H4a.5.5 0 0 1-.5-.5z"/>
+                        </svg>
+                    </button>
+                </form>
+            }
+
+        </div>
     </div>
 }
 

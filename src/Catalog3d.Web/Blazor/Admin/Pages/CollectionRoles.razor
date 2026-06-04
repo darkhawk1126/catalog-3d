@@ -17,14 +17,15 @@ else
 {
     <div class="page-header">
         <div class="page-header-title">
-            <FluentBreadcrumb>
-                <FluentBreadcrumbItem Href="/collections">Collections</FluentBreadcrumbItem>
-                <FluentBreadcrumbItem Href="@($"/collections/{Slug}")">@_collection.Name</FluentBreadcrumbItem>
-                <FluentBreadcrumbItem>Roles</FluentBreadcrumbItem>
-            </FluentBreadcrumb>
-            <FluentLabel Typo="Typography.H4">Role Assignments — @_collection.Name</FluentLabel>
+            <nav class="c3d-breadcrumb">
+                <a href="/collections">Collections</a>
+                <span class="c3d-breadcrumb-sep">/</span>
+                <a href="/collections/@Slug">@_collection.Name</a>
+                <span class="c3d-breadcrumb-sep">/</span>
+                <span class="c3d-breadcrumb-current">Roles</span>
+            </nav>
+            <h1 class="c3d-page-title">Role Assignments</h1>
         </div>
-        <FluentSpacer />
         <FluentButton Appearance="Appearance.Outline"
                       IconStart="@(new Size20.ArrowLeft())"
                       OnClick="@(() => Nav.NavigateTo($"/collections/{Slug}"))">
@@ -50,9 +51,9 @@ else
                             Class="assignments-grid">
                 <PropertyColumn Title="Principal" Property="@(r => r.Principal)" />
                 <TemplateColumn Title="Role">
-                    <FluentBadge Appearance="@RoleBadgeAppearance(context.Role)">
+                    <span class="@RolePillClass(context.Role)">
                         @context.Role.ToString()
-                    </FluentBadge>
+                    </span>
                 </TemplateColumn>
                 <TemplateColumn Title="" Align="Align.End">
                     <FluentButton Appearance="Appearance.Lightweight"
@@ -269,12 +270,12 @@ else
         }
     }
 
-    private static Appearance RoleBadgeAppearance(CollectionRole role) => role switch
+    private static string RolePillClass(CollectionRole role) => role switch
     {
-        CollectionRole.Admin    => Appearance.Accent,
-        CollectionRole.Uploader => Appearance.Neutral,
-        CollectionRole.Download => Appearance.Outline,
-        CollectionRole.Preview  => Appearance.Lightweight,
-        _                       => Appearance.Neutral
+        CollectionRole.Admin    => "status-pill status-ready",
+        CollectionRole.Uploader => "status-pill status-processing",
+        CollectionRole.Download => "status-pill status-pending",
+        CollectionRole.Preview  => "status-pill status-pending",
+        _                       => "meta-mono"
     };
 }

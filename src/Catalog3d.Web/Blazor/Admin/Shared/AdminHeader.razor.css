@@ -1,0 +1,38 @@
+.c3d-header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    height: 100%;
+    padding: 0 1rem;
+}
+
+.c3d-header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.c3d-user-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 4px 10px 4px 8px;
+    border-radius: 99px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 0.8125rem;
+    color: var(--neutral-foreground-hint);
+}
+
+.c3d-user-chip-icon {
+    opacity: 0.6;
+    flex-shrink: 0;
+}
+
+.c3d-user-chip-name {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

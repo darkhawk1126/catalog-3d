@@ -1,31 +1,38 @@
 @page "/models/{Slug}"
 @namespace Catalog3d.Web.Blazor.Admin.Pages
-@attribute [Authorize]
 
 <PageTitle>@(_model?.Name ?? Slug) — catalog-3d</PageTitle>
 
 @if (_loading)
 {
-    <FluentProgressRing />
+    <div style="display: flex; justify-content: center; padding: 4rem;">
+        <FluentProgressRing Style="width: 36px; height: 36px;" />
+    </div>
 }
 else if (_model is null)
 {
-    <FluentMessageBar Intent="MessageIntent.Error">Model not found or you do not have access.</FluentMessageBar>
+    <div class="c3d-empty-state" style="margin-top: 2rem;">
+        <div class="c3d-empty-state-icon"><FluentIcon Value="@(new Size48.Cube())" /></div>
+        <p class="c3d-empty-state-title">Model not found</p>
+        <p class="c3d-empty-state-desc">This model doesn't exist or you don't have access.</p>
+        <FluentAnchor Href="/collections" Appearance="Appearance.Accent">Back to Collections</FluentAnchor>
+    </div>
 }
 else
 {
-    <FluentStack Orientation="Orientation.Vertical" VerticalGap="24">
-
-        @* Header row: back link + title + admin actions *@
-        <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" HorizontalGap="12">
-            <FluentAnchor Href="@($"/collections/{_collection?.Slug}")" Appearance="Appearance.Hypertext">
-                &larr; @(_collection?.Name ?? "Collection")
-            </FluentAnchor>
-        </FluentStack>
-
-        <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" HorizontalGap="16">
-            <FluentLabel Typo="Typography.H4" Style="flex: 1;">@_model.Name</FluentLabel>
-
+    @* Page header *@
+    <div class="c3d-page-header">
+        <div class="model-header-left">
+            <nav class="c3d-breadcrumb">
+                <a href="/collections">Collections</a>
+                <span class="c3d-breadcrumb-sep">/</span>
+                <a href="/collections/@(_collection?.Slug)">@(_collection?.Name ?? "Collection")</a>
+                <span class="c3d-breadcrumb-sep">/</span>
+                <span class="c3d-breadcrumb-current">@_model.Name</span>
+            </nav>
+            <h1 class="c3d-page-title">@_model.Name</h1>
+        </div>
+        <div class="model-header-actions">
             @if (_isAdmin)
             {
                 <FluentButton Appearance="Appearance.Outline"
@@ -43,124 +50,119 @@ else
                     Delete
                 </FluentButton>
             }
-        </FluentStack>
+        </div>
+    </div>
 
-        @* Two-column layout: thumbnail + metadata sidebar *@
-        <FluentGrid>
-            <FluentGridItem xs="12" sm="4">
-                @* Thumbnail — Preview-gated via <img> pointing at the authenticated endpoint *@
+    @* Two-column layout *@
+    <div class="model-layout">
+        @* Left: thumbnail + viewer link *@
+        <div class="model-thumb-col">
+            <div class="model-thumb-wrap">
                 @if (_thumbnailAvailable)
                 {
                     <img src="/api/v1/models/@Slug/thumbnail"
                          alt="@_model.Name thumbnail"
-                         style="width: 100%; border-radius: var(--control-corner-radius); border: 1px solid var(--neutral-stroke-rest);" />
+                         class="model-thumb-img" />
                 }
                 else
                 {
-                    <FluentStack Orientation="Orientation.Vertical"
-                                 HorizontalAlignment="HorizontalAlignment.Center"
-                                 Style="padding: 40px; border: 1px solid var(--neutral-stroke-rest); border-radius: var(--control-corner-radius); background: var(--neutral-fill-secondary-rest);">
-                        <FluentIcon Value="@(new Size48.Cube())" Color="Color.Neutral" />
-                        <FluentLabel Typo="Typography.Body" Style="color: var(--neutral-foreground-hint);">
+                    <div class="model-thumb-empty">
+                        <FluentIcon Value="@(new Size48.Cube())" />
+                        <span class="meta-mono" style="font-size: 0.7rem; text-align: center;">
                             @(_model.Status == ModelStatus.Processing ? "Rendering thumbnail…" :
                               _model.Status == ModelStatus.Failed ? "Render failed" : "No thumbnail")
-                        </FluentLabel>
-                    </FluentStack>
+                        </span>
+                    </div>
                 }
+            </div>
 
-                @* Viewer link — Download-gated, shown only to Download+ callers *@
-                @if (_canDownload && _stlFiles.Count > 0)
+            @* Viewer link — Download-gated, shown only to Download+ callers *@
+            @if (_canDownload && _stlFiles.Count > 0)
+            {
+                <div class="model-viewer-links">
+                    @foreach (var stl in _stlFiles)
+                    {
+                        <FluentAnchor Href="@($"/viewer/{stl.Id}")"
+                                      Target="_blank"
+                                      Appearance="Appearance.Accent"
+                                      Style="width: 100%; justify-content: center;">
+                            <FluentIcon Value="@(new Size20.CubeMultiple())" Style="margin-right: 6px;" />
+                            Open 3D Viewer
+                        </FluentAnchor>
+                    }
+                </div>
+            }
+        </div>
+
+        @* Right: metadata + file list *@
+        <div class="model-meta-col">
+            @* Model metadata *@
+            <div class="col-meta-card" style="margin-bottom: 1.5rem;">
+                <div class="c3d-meta-row">
+                    <span class="c3d-meta-key">Status</span>
+                    <span class="@ModelStatusPillClass(_model.Status)">@_model.Status</span>
+                </div>
+                <div class="c3d-meta-row">
+                    <span class="c3d-meta-key">Slug</span>
+                    <code>@_model.Slug</code>
+                </div>
+                <div class="c3d-meta-row">
+                    <span class="c3d-meta-key">Owner</span>
+                    <span class="c3d-meta-val">@_model.Owner</span>
+                </div>
+                <div class="c3d-meta-row">
+                    <span class="c3d-meta-key">Uploaded</span>
+                    <span class="c3d-meta-val">@_model.CreatedAt.ToLocalTime().ToString("g")</span>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(_model.Description))
                 {
-                    <FluentStack Orientation="Orientation.Vertical" VerticalGap="8" Style="margin-top: 12px;">
-                        @foreach (var stl in _stlFiles)
-                        {
-                            <FluentAnchor Href="@($"/viewer/{stl.Id}")"
-                                          Target="_blank"
-                                          Appearance="Appearance.Accent">
-                                <FluentIcon Value="@(new Size20.CubeMultiple())" Style="margin-right: 6px;" />
-                                Open 3D viewer
-                            </FluentAnchor>
-                        }
-                    </FluentStack>
+                    <div class="c3d-meta-row">
+                        <span class="c3d-meta-key">Description</span>
+                        <span class="c3d-meta-val">@_model.Description</span>
+                    </div>
                 }
-            </FluentGridItem>
+            </div>
 
-            <FluentGridItem xs="12" sm="8">
-                <FluentStack Orientation="Orientation.Vertical" VerticalGap="16">
+            @* File list — Download-gated geometry info *@
+            @if (_canDownload && _stlFiles.Count > 0)
+            {
+                <span class="c3d-section-label">Files</span>
 
-                    @* Model metadata *@
-                    <FluentCard>
-                        <FluentStack Orientation="Orientation.Vertical" VerticalGap="12" Style="padding: 4px;">
-                            <div>
-                                <FluentLabel Typo="Typography.Body" Style="font-weight: 600;">Description</FluentLabel>
-                                <FluentLabel Typo="Typography.Body">
-                                    @(string.IsNullOrWhiteSpace(_model.Description) ? "—" : _model.Description)
-                                </FluentLabel>
-                            </div>
-                            <div>
-                                <FluentLabel Typo="Typography.Body" Style="font-weight: 600;">Status</FluentLabel>
-                                <FluentBadge Appearance="@ModelStatusAppearance(_model.Status)">
-                                    @_model.Status
-                                </FluentBadge>
-                            </div>
-                            <div>
-                                <FluentLabel Typo="Typography.Body" Style="font-weight: 600;">Owner</FluentLabel>
-                                <FluentLabel Typo="Typography.Body">@_model.Owner</FluentLabel>
-                            </div>
-                            <div>
-                                <FluentLabel Typo="Typography.Body" Style="font-weight: 600;">Slug</FluentLabel>
-                                <code>@_model.Slug</code>
-                            </div>
-                            <div>
-                                <FluentLabel Typo="Typography.Body" Style="font-weight: 600;">Uploaded</FluentLabel>
-                                <FluentLabel Typo="Typography.Body">@_model.CreatedAt.ToLocalTime().ToString("g")</FluentLabel>
-                            </div>
-                        </FluentStack>
-                    </FluentCard>
-
-                    @* File list — Download-gated geometry info *@
-                    @if (_canDownload && _stlFiles.Count > 0)
-                    {
-                        <FluentLabel Typo="Typography.H6">Files</FluentLabel>
-                        <FluentDataGrid Items="@_stlFiles.AsQueryable()" TGridItem="Catalog3d.Domain.Entities.ModelFile">
-                            <TemplateColumn Title="File ID">
-                                <code style="font-size: 0.75em;">@context.Id.ToString("D")[..8]…</code>
-                            </TemplateColumn>
-                            <TemplateColumn Title="Size">
-                                @FormatSize(context.Size)
-                            </TemplateColumn>
-                            <TemplateColumn Title="Triangles">
-                                @(context.TriCount.HasValue ? context.TriCount.Value.ToString("N0") : "—")
-                            </TemplateColumn>
-                            <TemplateColumn Title="Bounding box">
-                                @(string.IsNullOrEmpty(context.BoundingBox) ? "—" : context.BoundingBox)
-                            </TemplateColumn>
-                            <TemplateColumn Title="Render">
-                                <FluentBadge Appearance="@FileRenderAppearance(context.RenderStatus)">
-                                    @context.RenderStatus
-                                </FluentBadge>
-                            </TemplateColumn>
-                            <TemplateColumn Title="">
-                                <FluentAnchor Href="@($"/api/v1/models/files/{context.Id}")"
-                                              Target="_blank"
-                                              Appearance="Appearance.Hypertext">
-                                    Download
-                                </FluentAnchor>
-                            </TemplateColumn>
-                        </FluentDataGrid>
-                    }
-                    else if (!_canDownload)
-                    {
-                        <FluentMessageBar Intent="MessageIntent.Warning">
-                            File details and downloads require Download access.
-                        </FluentMessageBar>
-                    }
-
-                </FluentStack>
-            </FluentGridItem>
-        </FluentGrid>
-
-    </FluentStack>
+                <div class="files-table-wrap">
+                    <FluentDataGrid Items="@_stlFiles.AsQueryable()" TGridItem="Catalog3d.Domain.Entities.ModelFile">
+                        <TemplateColumn Title="File ID">
+                            <code class="meta-mono" style="font-size: 0.7rem;">@context.Id.ToString("D")[..8]…</code>
+                        </TemplateColumn>
+                        <TemplateColumn Title="Size">
+                            <span class="meta-mono">@FormatSize(context.Size)</span>
+                        </TemplateColumn>
+                        <TemplateColumn Title="Triangles">
+                            <span class="meta-mono">@(context.TriCount.HasValue ? context.TriCount.Value.ToString("N0") : "—")</span>
+                        </TemplateColumn>
+                        <TemplateColumn Title="Bounding Box">
+                            <span class="meta-mono" style="font-size: 0.75rem;">@(string.IsNullOrEmpty(context.BoundingBox) ? "—" : context.BoundingBox)</span>
+                        </TemplateColumn>
+                        <TemplateColumn Title="Render">
+                            <span class="@FileRenderPillClass(context.RenderStatus)">@context.RenderStatus</span>
+                        </TemplateColumn>
+                        <TemplateColumn Title="">
+                            <FluentAnchor Href="@($"/api/v1/models/files/{context.Id}")"
+                                          Target="_blank"
+                                          Appearance="Appearance.Hypertext">
+                                Download
+                            </FluentAnchor>
+                        </TemplateColumn>
+                    </FluentDataGrid>
+                </div>
+            }
+            else if (!_canDownload)
+            {
+                <FluentMessageBar Intent="MessageIntent.Warning">
+                    File details and downloads require Download access.
+                </FluentMessageBar>
+            }
+        </div>
+    </div>
 }
 
 @code {
@@ -321,17 +323,19 @@ else
         _                => $"{bytes} B",
     };
 
-    private static Appearance ModelStatusAppearance(ModelStatus s) => s switch
+    private static string ModelStatusPillClass(ModelStatus s) => s switch
     {
-        ModelStatus.Ready      => Appearance.Accent,
-        ModelStatus.Failed     => Appearance.Lightweight,
-        _                      => Appearance.Neutral,
+        ModelStatus.Ready      => "status-pill status-ready",
+        ModelStatus.Processing => "status-pill status-processing",
+        ModelStatus.Failed     => "status-pill status-failed",
+        _                      => "status-pill status-pending"
     };
 
-    private static Appearance FileRenderAppearance(Catalog3d.Domain.Entities.RenderStatus s) => s switch
+    private static string FileRenderPillClass(Catalog3d.Domain.Entities.RenderStatus s) => s switch
     {
-        Catalog3d.Domain.Entities.RenderStatus.Complete   => Appearance.Accent,
-        Catalog3d.Domain.Entities.RenderStatus.Failed     => Appearance.Lightweight,
-        _                                                  => Appearance.Neutral,
+        Catalog3d.Domain.Entities.RenderStatus.Complete   => "status-pill status-ready",
+        Catalog3d.Domain.Entities.RenderStatus.Processing => "status-pill status-processing",
+        Catalog3d.Domain.Entities.RenderStatus.Failed     => "status-pill status-failed",
+        _                                                  => "status-pill status-pending"
     };
 }

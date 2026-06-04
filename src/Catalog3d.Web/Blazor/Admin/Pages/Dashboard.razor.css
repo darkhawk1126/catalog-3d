@@ -1,47 +1,53 @@
+.dashboard-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 5rem;
+}
+
+.dashboard-header {
+    margin-bottom: 1.75rem;
+}
+
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
     gap: 1rem;
-    margin-bottom: 2rem;
+    margin-bottom: 2.5rem;
 }
 
-.stat-card {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 1rem;
-    padding: 1.25rem 1rem;
+/* Variant: stat card with processing emphasis */
+.stat-card-processing .c3d-stat-icon-wrap {
+    background: rgba(232, 121, 42, 0.12);
+    border-color: rgba(232, 121, 42, 0.25);
+    color: var(--c3d-status-processing-text);
 }
 
-.stat-icon {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 2.5rem;
-    height: 2.5rem;
-    border-radius: 50%;
-    background: var(--neutral-fill-secondary-rest);
+/* Variant: stat card with failed emphasis */
+.stat-card-failed {
+    border-color: rgba(239, 68, 68, 0.3) !important;
+}
+.stat-card-failed::before {
+    background: linear-gradient(90deg, var(--c3d-status-failed-text) 0%, transparent 100%) !important;
 }
 
-.stat-body {
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
+.stat-icon-failed {
+    background: var(--c3d-status-failed-bg) !important;
+    border-color: var(--c3d-status-failed-border) !important;
+    color: var(--c3d-status-failed-text) !important;
 }
 
-.stat-value {
-    font-size: 1.75rem;
-    font-weight: 700;
-    line-height: 1;
-    color: var(--neutral-foreground-rest);
-}
-
-.stat-label {
-    font-size: 0.8125rem;
-    color: var(--neutral-foreground-hint);
+.stat-value-failed {
+    color: var(--c3d-status-failed-text) !important;
 }
 
 .recent-section {
     margin-top: 0.5rem;
+}
+
+.recent-table-wrap {
+    border: 1px solid var(--c3d-border);
+    border-radius: var(--c3d-radius-lg);
+    overflow: hidden;
+    background: var(--c3d-surface-card);
 }

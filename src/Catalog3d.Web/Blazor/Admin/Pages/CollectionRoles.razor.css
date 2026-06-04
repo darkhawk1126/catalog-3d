@@ -1,26 +1,39 @@
 .page-header {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    margin-bottom: 24px;
+    gap: 12px;
+    margin-bottom: 1.75rem;
+    flex-wrap: wrap;
 }
 
 .page-header-title {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 0.25rem;
+    flex: 1;
 }
 
 .section-heading {
-    margin-bottom: 12px;
+    font-family: var(--c3d-mono, 'JetBrains Mono', monospace);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--neutral-foreground-hint);
+    margin-bottom: 0.75rem;
+    display: block;
 }
 
 .assignments-section {
-    margin-bottom: 32px;
+    margin-bottom: 2.5rem;
 }
 
 .assignments-grid {
     width: 100%;
+    border: 1px solid var(--c3d-border, rgba(255,255,255,0.07));
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--c3d-surface-card, var(--neutral-layer-2));
 }
 
 .add-section {
@@ -28,18 +41,24 @@
 }
 
 .add-card {
-    padding: 20px;
+    background: var(--c3d-surface-card, var(--neutral-layer-2)) !important;
+    border: 1px solid var(--c3d-border, rgba(255,255,255,0.07)) !important;
+    border-radius: 10px !important;
+    padding: 1.5rem !important;
 }
 
 .helper-text {
-    font-size: var(--type-ramp-minus-1-font-size);
+    font-size: var(--type-ramp-minus-1-font-size, 0.8125rem);
     color: var(--neutral-foreground-hint);
-    line-height: 1.4;
+    line-height: 1.5;
 }
 
 code {
-    background: var(--neutral-fill-rest);
-    padding: 1px 4px;
+    font-family: var(--c3d-mono, 'JetBrains Mono', monospace) !important;
+    font-size: 0.85em;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255,255,255,0.07);
     border-radius: 3px;
-    font-size: 0.9em;
+    padding: 2px 6px;
+    color: #E8792A;
 }

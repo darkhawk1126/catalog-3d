@@ -14,12 +14,18 @@ else if (!_authorized)
 }
 else
 {
-    <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" Style="margin-bottom: 1rem;">
-        <FluentAnchor Href="@($"/collections/{Slug}")" Appearance="Appearance.Hypertext" IconStart="@(new Size20.ArrowLeft())">
-            @Slug
-        </FluentAnchor>
-        <FluentLabel Typo="Typography.H4" Style="margin-left: .5rem;">Edit Collection</FluentLabel>
-    </FluentStack>
+    <div class="c3d-page-header" style="margin-bottom: 1.75rem;">
+        <div>
+            <nav class="c3d-breadcrumb">
+                <a href="/collections">Collections</a>
+                <span class="c3d-breadcrumb-sep">/</span>
+                <a href="/collections/@Slug">@Slug</a>
+                <span class="c3d-breadcrumb-sep">/</span>
+                <span class="c3d-breadcrumb-current">Edit</span>
+            </nav>
+            <h1 class="c3d-page-title">Edit Collection</h1>
+        </div>
+    </div>
 
     <EditForm Model="@_form" OnValidSubmit="HandleSubmitAsync">
         <DataAnnotationsValidator />

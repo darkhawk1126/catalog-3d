@@ -7,106 +7,135 @@
 
 @if (_loading)
 {
-    <FluentProgressRing />
+    <div style="display: flex; justify-content: center; padding: 4rem;">
+        <FluentProgressRing Style="width: 36px; height: 36px;" />
+    </div>
 }
 else if (_collection is null)
 {
-    <FluentLabel>Collection not found.</FluentLabel>
+    <div class="c3d-empty-state" style="margin-top: 2rem;">
+        <div class="c3d-empty-state-icon"><FluentIcon Value="@(new Size48.Folder())" /></div>
+        <p class="c3d-empty-state-title">Collection not found</p>
+        <p class="c3d-empty-state-desc">This collection doesn't exist or you don't have access.</p>
+        <FluentAnchor Href="/collections" Appearance="Appearance.Accent">Back to Collections</FluentAnchor>
+    </div>
 }
 else
 {
     @* Page header *@
-    <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" Style="margin-bottom: 1rem; flex-wrap: wrap; gap: .5rem;">
-        <FluentAnchor Href="/collections" Appearance="Appearance.Hypertext" IconStart="@(new Size20.ArrowLeft())">
-            Collections
-        </FluentAnchor>
-        <FluentLabel Typo="Typography.H4" Style="flex: 1; margin-left: .5rem;">@_collection.Name</FluentLabel>
+    <div class="c3d-page-header">
+        <div class="col-header-left">
+            <nav class="c3d-breadcrumb">
+                <a href="/collections">Collections</a>
+                <span class="c3d-breadcrumb-sep">/</span>
+                <span class="c3d-breadcrumb-current">@_collection.Name</span>
+            </nav>
+            <h1 class="c3d-page-title">@_collection.Name</h1>
+        </div>
 
-        @if (_isAdmin)
-        {
-            <FluentButton Appearance="Appearance.Neutral"
-                          IconStart="@(new Size20.Edit())"
-                          OnClick="@(() => Nav.NavigateTo($"/collections/{Slug}/edit"))">
-                Edit
-            </FluentButton>
-            <FluentButton Appearance="Appearance.Neutral"
-                          IconStart="@(new Size20.PeopleTeam())"
-                          OnClick="@(() => Nav.NavigateTo($"/collections/{Slug}/roles"))">
-                Manage Roles
-            </FluentButton>
-        }
-        @if (_canUpload)
-        {
-            <FluentButton Appearance="Appearance.Accent"
-                          IconStart="@(new Size20.ArrowUpload())"
-                          OnClick="@(() => Nav.NavigateTo($"/collections/{Slug}/upload"))">
-                Upload Model
-            </FluentButton>
-        }
-    </FluentStack>
+        <div class="col-header-actions">
+            @if (_isAdmin)
+            {
+                <FluentButton Appearance="Appearance.Neutral"
+                              IconStart="@(new Size20.Edit())"
+                              OnClick="@(() => Nav.NavigateTo($"/collections/{Slug}/edit"))">
+                    Edit
+                </FluentButton>
+                <FluentButton Appearance="Appearance.Neutral"
+                              IconStart="@(new Size20.PeopleTeam())"
+                              OnClick="@(() => Nav.NavigateTo($"/collections/{Slug}/roles"))">
+                    Manage Roles
+                </FluentButton>
+            }
+            @if (_canUpload)
+            {
+                <FluentButton Appearance="Appearance.Accent"
+                              IconStart="@(new Size20.ArrowUpload())"
+                              OnClick="@(() => Nav.NavigateTo($"/collections/{Slug}/upload"))">
+                    Upload Model
+                </FluentButton>
+            }
+        </div>
+    </div>
 
     @* Collection metadata card *@
-    <FluentCard Style="margin-bottom: 1.5rem; padding: 1rem;">
-        <FluentStack Orientation="Orientation.Vertical" Style="gap: .25rem;">
-            <FluentStack Orientation="Orientation.Horizontal" Style="gap: 2rem; flex-wrap: wrap;">
-                <div>
-                    <FluentLabel Weight="FontWeight.Bold">Slug</FluentLabel>
-                    <FluentLabel><code>@_collection.Slug</code></FluentLabel>
-                </div>
-                <div>
-                    <FluentLabel Weight="FontWeight.Bold">Your Role</FluentLabel>
-                    <FluentBadge Appearance="Appearance.Accent">@(_effectiveRole?.ToString() ?? "—")</FluentBadge>
-                </div>
-                <div>
-                    <FluentLabel Weight="FontWeight.Bold">Created</FluentLabel>
-                    <FluentLabel>@_collection.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</FluentLabel>
-                </div>
-            </FluentStack>
-            @if (!string.IsNullOrWhiteSpace(_collection.Description))
-            {
-                <FluentLabel Style="margin-top: .5rem;">@_collection.Description</FluentLabel>
-            }
-        </FluentStack>
-    </FluentCard>
+    <div class="col-meta-card">
+        <div class="c3d-meta-row">
+            <span class="c3d-meta-key">Slug</span>
+            <code>@_collection.Slug</code>
+        </div>
+        <div class="c3d-meta-row">
+            <span class="c3d-meta-key">Your Role</span>
+            <span class="@RolePillClass(_effectiveRole)">@(_effectiveRole?.ToString() ?? "—")</span>
+        </div>
+        <div class="c3d-meta-row">
+            <span class="c3d-meta-key">Created</span>
+            <span class="c3d-meta-val">@_collection.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</span>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(_collection.Description))
+        {
+            <div class="c3d-meta-row">
+                <span class="c3d-meta-key">Description</span>
+                <span class="c3d-meta-val">@_collection.Description</span>
+            </div>
+        }
+    </div>
 
     @* Models section *@
-    <FluentLabel Typo="Typography.H5" Style="margin-bottom: .75rem;">
-        Models (@_models.Count)
-    </FluentLabel>
+    <div class="models-section-header">
+        <span class="c3d-section-label">Models (@_models.Count)</span>
+    </div>
 
     @if (_models.Count == 0)
     {
-        <FluentLabel>No models in this collection yet.</FluentLabel>
+        <div class="c3d-empty-state">
+            <div class="c3d-empty-state-icon"><FluentIcon Value="@(new Size48.Cube())" /></div>
+            <p class="c3d-empty-state-title">No models yet</p>
+            <p class="c3d-empty-state-desc">Upload your first STL to populate this collection.</p>
+            @if (_canUpload)
+            {
+                <FluentButton Appearance="Appearance.Accent"
+                              IconStart="@(new Size20.ArrowUpload())"
+                              OnClick="@(() => Nav.NavigateTo($"/collections/{Slug}/upload"))">
+                    Upload Model
+                </FluentButton>
+            }
+        </div>
     }
     else
     {
-        <FluentDataGrid Items="@_models.AsQueryable()"
-                        GridTemplateColumns="auto 1fr auto auto auto auto"
-                        TGridItem="ModelRow">
-            <TemplateColumn Title="Thumbnail" Style="width: 64px;">
-                @if (context.HasThumbnail)
-                {
-                    <img src="/api/v1/models/@context.Slug/thumbnail"
-                         alt="@context.Name thumbnail"
-                         style="width: 56px; height: 56px; object-fit: cover; border-radius: 4px;" />
-                }
-                else
-                {
-                    <FluentIcon Value="@(new Size24.Cube())" Color="Color.Neutral" />
-                }
-            </TemplateColumn>
-            <PropertyColumn Title="Name" Property="@(r => r.Name)" Sortable="true" />
-            <TemplateColumn Title="Status">
-                <FluentBadge Appearance="Appearance.Neutral" BackgroundColor="@StatusColor(context.Status)">
-                    @StatusLabel(context.Status)
-                </FluentBadge>
-            </TemplateColumn>
-            <PropertyColumn Title="Files" Property="@(r => r.FileCount)" Align="Align.End" />
-            <PropertyColumn Title="Updated" Property="@(r => r.UpdatedDisplay)" />
-            <TemplateColumn Title="">
-                <FluentAnchor Href="@($"/models/{context.Slug}")" Appearance="Appearance.Hypertext">Details</FluentAnchor>
-            </TemplateColumn>
-        </FluentDataGrid>
+        <div class="c3d-card-grid">
+            @foreach (var model in _models)
+            {
+                <a href="/models/@model.Slug" class="c3d-model-card">
+                    <div class="c3d-model-card-thumb">
+                        @if (model.HasThumbnail)
+                        {
+                            <img src="/api/v1/models/@model.Slug/thumbnail"
+                                 alt="@model.Name thumbnail"
+                                 loading="lazy" />
+                        }
+                        else
+                        {
+                            <div class="c3d-model-card-thumb-empty">
+                                <FluentIcon Value="@(new Size48.Cube())" />
+                                <span class="meta-mono" style="font-size: 0.65rem;">
+                                    @ThumbStateLabel(model.Status)
+                                </span>
+                            </div>
+                        }
+                    </div>
+                    <div class="c3d-model-card-body">
+                        <span class="c3d-model-card-name">@model.Name</span>
+                        <div class="c3d-model-card-meta">
+                            <span class="@StatusPillClass(model.Status)">@StatusLabel(model.Status)</span>
+                            <span class="c3d-model-card-date">@model.UpdatedDisplay</span>
+                        </div>
+                        <span class="meta-mono" style="font-size: 0.7rem;">@model.FileCount file@(model.FileCount != 1 ? "s" : "")</span>
+                    </div>
+                </a>
+            }
+        </div>
     }
 }
 
@@ -208,11 +237,27 @@ else
         _                      => status.ToString()
     };
 
-    private static string StatusColor(ModelStatus status) => status switch
+    private static string StatusPillClass(ModelStatus status) => status switch
     {
-        ModelStatus.Ready      => "var(--success-fill-rest)",
-        ModelStatus.Processing => "var(--accent-fill-rest)",
-        ModelStatus.Failed     => "var(--error-fill-rest)",
-        _                      => "var(--neutral-fill-rest)"
+        ModelStatus.Ready      => "status-pill status-ready",
+        ModelStatus.Processing => "status-pill status-processing",
+        ModelStatus.Failed     => "status-pill status-failed",
+        _                      => "status-pill status-pending"
+    };
+
+    private static string ThumbStateLabel(ModelStatus status) => status switch
+    {
+        ModelStatus.Processing => "rendering…",
+        ModelStatus.Failed     => "render failed",
+        _                      => "no thumbnail"
+    };
+
+    private static string RolePillClass(CollectionRole? role) => role switch
+    {
+        CollectionRole.Admin    => "status-pill status-ready",
+        CollectionRole.Uploader => "status-pill status-processing",
+        CollectionRole.Download => "status-pill status-pending",
+        CollectionRole.Preview  => "status-pill status-pending",
+        _                       => "meta-mono"
     };
 }

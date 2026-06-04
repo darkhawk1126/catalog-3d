@@ -1,0 +1,12 @@
+.collections-table-wrap {
+    border: 1px solid var(--c3d-border);
+    border-radius: var(--c3d-radius-lg);
+    overflow: hidden;
+    background: var(--c3d-surface-card);
+}
+
+.row-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}

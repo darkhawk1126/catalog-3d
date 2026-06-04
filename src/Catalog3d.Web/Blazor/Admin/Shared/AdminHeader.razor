@@ -1,23 +1,25 @@
 @namespace Catalog3d.Web.Blazor.Admin.Shared
 
-@* App-bar header component. Shows app title on the left, current user on the right. *@
+@* App-bar header: catalog·3d wordmark on the left, authenticated user on the right. *@
 
-<FluentStack Orientation="Orientation.Horizontal"
-             HorizontalAlignment="HorizontalAlignment.SpaceBetween"
-             VerticalAlignment="VerticalAlignment.Center"
-             Style="width: 100%; padding: 0 1rem;">
-    <FluentLabel Typo="Typography.H6" Style="color: var(--neutral-foreground-rest);">
-        catalog-3d admin
-    </FluentLabel>
+<div class="c3d-header-inner">
+    <a href="/" class="c3d-wordmark" title="catalog·3d dashboard">
+        <span class="c3d-wordmark-catalog">catalog</span>
+        <span class="c3d-wordmark-sep">·</span>
+        <span class="c3d-wordmark-3d">3d</span>
+    </a>
 
-    <AuthorizeView>
-        <Authorized>
-            <FluentLabel Typo="Typography.Body" Style="color: var(--neutral-foreground-rest);">
-                @context.User.Identity?.Name
-            </FluentLabel>
-        </Authorized>
-        <NotAuthorized>
-            <FluentAnchor Href="/login/dev">Sign in</FluentAnchor>
-        </NotAuthorized>
-    </AuthorizeView>
-</FluentStack>
+    <div class="c3d-header-right">
+        <AuthorizeView>
+            <Authorized>
+                <div class="c3d-user-chip">
+                    <FluentIcon Value="@(new Size16.Person())" Class="c3d-user-chip-icon" />
+                    <span class="c3d-user-chip-name">@context.User.Identity?.Name</span>
+                </div>
+            </Authorized>
+            <NotAuthorized>
+                <FluentAnchor Href="/login/dev" Appearance="Appearance.Accent">Sign in</FluentAnchor>
+            </NotAuthorized>
+        </AuthorizeView>
+    </div>
+</div>

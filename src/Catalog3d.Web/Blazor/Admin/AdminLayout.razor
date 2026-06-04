@@ -22,8 +22,17 @@
     </Body>
 </FluentMainLayout>
 
-<FluentDesignTheme @bind-Mode="@_themeMode" StorageName="catalog3d-theme" />
+<FluentDesignTheme @bind-Mode="@_themeMode"
+                  CustomColor="@_accentColor"
+                  NeutralBaseColor="#1A1D21"
+                  StorageName="catalog3d-theme" />
 
 @code {
-    private DesignThemeModes _themeMode = DesignThemeModes.System;
+    // Default to Dark — the three.js viewer is always dark and the shell
+    // must harmonize with it on first visit. Users can switch via the toggle.
+    private DesignThemeModes _themeMode = DesignThemeModes.Dark;
+
+    // Filament-heat accent (#E8792A) drives all Fluent accent-fill tokens
+    // (buttons, active nav, progress rings, badges with Appearance.Accent).
+    private const string _accentColor = "#E8792A";
 }

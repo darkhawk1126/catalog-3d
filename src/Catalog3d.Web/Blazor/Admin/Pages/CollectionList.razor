@@ -6,12 +6,14 @@
 
 @if (_loading)
 {
-    <FluentProgressRing />
+    <div style="display: flex; justify-content: center; padding: 4rem;">
+        <FluentProgressRing Style="width: 36px; height: 36px;" />
+    </div>
 }
 else
 {
-    <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" Style="margin-bottom: 1rem;">
-        <FluentLabel Typo="Typography.H4" Style="flex: 1;">Collections</FluentLabel>
+    <div class="c3d-page-header">
+        <h1 class="c3d-page-title">Collections</h1>
         @if (_isSiteAdmin)
         {
             <FluentButton Appearance="Appearance.Accent"
@@ -20,38 +22,67 @@ else
                 New Collection
             </FluentButton>
         }
-    </FluentStack>
+    </div>
 
     @if (_collections.Count == 0)
     {
-        <FluentLabel>No collections found.</FluentLabel>
+        <div class="c3d-empty-state">
+            <div class="c3d-empty-state-icon">
+                <FluentIcon Value="@(new Size48.Folder())" />
+            </div>
+            <p class="c3d-empty-state-title">No collections</p>
+            <p class="c3d-empty-state-desc">
+                @if (_isSiteAdmin)
+                {
+                    <span>Create a collection to start organizing your 3D models.</span>
+                }
+                else
+                {
+                    <span>You don't have access to any collections yet.</span>
+                }
+            </p>
+            @if (_isSiteAdmin)
+            {
+                <FluentButton Appearance="Appearance.Accent"
+                              IconStart="@(new Size20.Add())"
+                              OnClick="@(() => Nav.NavigateTo("/collections/new"))">
+                    New Collection
+                </FluentButton>
+            }
+        </div>
     }
     else
     {
-        <FluentDataGrid Items="@_collections.AsQueryable()"
-                        GridTemplateColumns="1fr 1fr auto auto auto"
-                        TGridItem="CollectionRow">
-            <PropertyColumn Title="Name" Property="@(r => r.Name)" Sortable="true" />
-            <PropertyColumn Title="Slug" Property="@(r => r.Slug)" Sortable="true" />
-            <PropertyColumn Title="Models" Property="@(r => r.ModelCount)" Align="Align.End" />
-            <TemplateColumn Title="Your Role">
-                <FluentBadge Appearance="Appearance.Neutral">@(context.EffectiveRole?.ToString() ?? "—")</FluentBadge>
-            </TemplateColumn>
-            <TemplateColumn Title="">
-                <FluentStack Orientation="Orientation.Horizontal">
-                    <FluentAnchor Href="@($"/collections/{context.Slug}")" Appearance="Appearance.Hypertext">View</FluentAnchor>
-                    @if (context.EffectiveRole >= CollectionRole.Admin)
-                    {
-                        <FluentAnchor Href="@($"/collections/{context.Slug}/edit")" Appearance="Appearance.Hypertext">Edit</FluentAnchor>
-                        <FluentButton IconStart="@(new Size20.Delete())"
-                                      Appearance="Appearance.Stealth"
-                                      Title="Delete collection"
-                                      OnClick="@(() => ConfirmDeleteAsync(context.Id, context.Name))">
-                        </FluentButton>
-                    }
-                </FluentStack>
-            </TemplateColumn>
-        </FluentDataGrid>
+        <div class="collections-table-wrap">
+            <FluentDataGrid Items="@_collections.AsQueryable()"
+                            GridTemplateColumns="1fr 1fr auto auto auto"
+                            TGridItem="CollectionRow">
+                <PropertyColumn Title="Name" Property="@(r => r.Name)" Sortable="true" />
+                <TemplateColumn Title="Slug">
+                    <code class="meta-mono">@context.Slug</code>
+                </TemplateColumn>
+                <PropertyColumn Title="Models" Property="@(r => r.ModelCount)" Align="Align.End" />
+                <TemplateColumn Title="Your Role">
+                    <span class="@RolePillClass(context.EffectiveRole)">
+                        @(context.EffectiveRole?.ToString() ?? "—")
+                    </span>
+                </TemplateColumn>
+                <TemplateColumn Title="">
+                    <div class="row-actions">
+                        <FluentAnchor Href="@($"/collections/{context.Slug}")" Appearance="Appearance.Hypertext">View</FluentAnchor>
+                        @if (context.EffectiveRole >= CollectionRole.Admin)
+                        {
+                            <FluentAnchor Href="@($"/collections/{context.Slug}/edit")" Appearance="Appearance.Hypertext">Edit</FluentAnchor>
+                            <FluentButton IconStart="@(new Size20.Delete())"
+                                          Appearance="Appearance.Stealth"
+                                          Title="Delete collection"
+                                          OnClick="@(() => ConfirmDeleteAsync(context.Id, context.Name))">
+                            </FluentButton>
+                        }
+                    </div>
+                </TemplateColumn>
+            </FluentDataGrid>
+        </div>
     }
 }
 
@@ -202,4 +233,13 @@ else
             Toast.ShowError($"Delete failed: {ex.Message}");
         }
     }
+
+    private static string RolePillClass(CollectionRole? role) => role switch
+    {
+        CollectionRole.Admin    => "status-pill status-ready",
+        CollectionRole.Uploader => "status-pill status-processing",
+        CollectionRole.Download => "status-pill status-pending",
+        CollectionRole.Preview  => "status-pill status-pending",
+        _                       => "meta-mono"
+    };
 }

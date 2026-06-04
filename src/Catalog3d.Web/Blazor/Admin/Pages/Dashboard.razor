@@ -12,87 +12,83 @@
 
 @if (_loading)
 {
-    <FluentProgressRing Style="display: block; margin: 4rem auto;" />
+    <div class="dashboard-loading">
+        <FluentProgressRing Style="width: 36px; height: 36px;" />
+    </div>
 }
 else
 {
-    <FluentLabel Typo="Typography.H4" Style="margin-bottom: 1.5rem;">Dashboard</FluentLabel>
+    <div class="dashboard-header">
+        <h1 class="c3d-page-title">Dashboard</h1>
+    </div>
 
     <div class="stats-grid">
-        <FluentCard Class="stat-card">
-            <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" Style="gap: 1rem;">
-                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Size24.AppFolder())" Style="pointer-events: none;" />
-                <div class="stat-body">
-                    <span class="stat-value">@_collectionCount</span>
-                    <span class="stat-label">Collections</span>
-                </div>
-            </FluentStack>
-        </FluentCard>
+        <div class="c3d-stat-card">
+            <div class="c3d-stat-icon-wrap">
+                <FluentIcon Value="@(new Size20.AppFolder())" />
+            </div>
+            <span class="c3d-stat-value">@_collectionCount</span>
+            <span class="c3d-stat-label">Collections</span>
+        </div>
 
-        <FluentCard Class="stat-card">
-            <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" Style="gap: 1rem;">
-                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Size24.CubeTree())" Style="pointer-events: none;" />
-                <div class="stat-body">
-                    <span class="stat-value">@_modelCount</span>
-                    <span class="stat-label">Models</span>
-                </div>
-            </FluentStack>
-        </FluentCard>
+        <div class="c3d-stat-card">
+            <div class="c3d-stat-icon-wrap">
+                <FluentIcon Value="@(new Size20.CubeTree())" />
+            </div>
+            <span class="c3d-stat-value">@_modelCount</span>
+            <span class="c3d-stat-label">Models</span>
+        </div>
 
-        <FluentCard Class="stat-card">
-            <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" Style="gap: 1rem;">
-                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Size24.ArrowSync())" Style="pointer-events: none;" />
-                <div class="stat-body">
-                    <span class="stat-value">@_pendingRenders</span>
-                    <span class="stat-label">Pending Renders</span>
-                </div>
-            </FluentStack>
-        </FluentCard>
+        <div class="c3d-stat-card stat-card-processing">
+            <div class="c3d-stat-icon-wrap">
+                <FluentIcon Value="@(new Size20.ArrowSync())" />
+            </div>
+            <span class="c3d-stat-value">@_pendingRenders</span>
+            <span class="c3d-stat-label">Pending Renders</span>
+        </div>
 
-        <FluentCard Class="stat-card">
-            <FluentStack Orientation="Orientation.Horizontal" VerticalAlignment="VerticalAlignment.Center" Style="gap: 1rem;">
-                <FluentButton Appearance="Appearance.Stealth" IconStart="@(new Size24.ErrorCircle())" Style="pointer-events: none;" />
-                <div class="stat-body">
-                    <span class="stat-value">@_failedRenders</span>
-                    <span class="stat-label">Failed Renders</span>
-                </div>
-            </FluentStack>
-        </FluentCard>
+        <div class="c3d-stat-card @(_failedRenders > 0 ? "stat-card-failed" : "")">
+            <div class="c3d-stat-icon-wrap @(_failedRenders > 0 ? "stat-icon-failed" : "")">
+                <FluentIcon Value="@(new Size20.ErrorCircle())" />
+            </div>
+            <span class="c3d-stat-value @(_failedRenders > 0 ? "stat-value-failed" : "")">@_failedRenders</span>
+            <span class="c3d-stat-label">Failed Renders</span>
+        </div>
     </div>
 
     @if (_recentModels.Count > 0)
     {
         <section class="recent-section">
-            <FluentLabel Typo="Typography.H6" Style="margin-bottom: 0.75rem;">Recent Uploads</FluentLabel>
+            <span class="c3d-section-label">Recent Uploads</span>
 
-            <FluentDataGrid Items="@_recentModels.AsQueryable()"
-                            GridTemplateColumns="1fr 1fr auto auto"
-                            TGridItem="RecentModelRow">
-                <PropertyColumn Title="Model" Property="@(m => m.Name)" />
-                <PropertyColumn Title="Collection" Property="@(m => m.CollectionName)" />
-                <TemplateColumn Title="Status">
-                    @{
-                        var statusColor = context.Status switch
-                        {
-                            ModelStatus.Ready      => "var(--success-foreground-rest, green)",
-                            ModelStatus.Failed     => "var(--error-foreground-rest, red)",
-                            _                      => "var(--warning-foreground-rest, orange)"
-                        };
-                    }
-                    <span style="color: @statusColor; font-weight: 600;">@context.Status</span>
-                </TemplateColumn>
-                <TemplateColumn Title="Uploaded">
-                    <span title="@context.CreatedAt.ToString("u")">@FormatRelative(context.CreatedAt)</span>
-                </TemplateColumn>
-            </FluentDataGrid>
+            <div class="recent-table-wrap">
+                <FluentDataGrid Items="@_recentModels.AsQueryable()"
+                                GridTemplateColumns="1fr 1fr auto auto"
+                                TGridItem="RecentModelRow">
+                    <PropertyColumn Title="Model" Property="@(m => m.Name)" />
+                    <PropertyColumn Title="Collection" Property="@(m => m.CollectionName)" />
+                    <TemplateColumn Title="Status">
+                        <span class="@StatusPillClass(context.Status)">@StatusLabel(context.Status)</span>
+                    </TemplateColumn>
+                    <TemplateColumn Title="Uploaded">
+                        <span class="meta-mono" title="@context.CreatedAt.ToString("u")">
+                            @FormatRelative(context.CreatedAt)
+                        </span>
+                    </TemplateColumn>
+                </FluentDataGrid>
+            </div>
         </section>
     }
     else
     {
-        <FluentMessageBar Intent="MessageIntent.Info" Style="margin-top: 1.5rem;">
-            No models uploaded yet.
-            <FluentAnchor Href="/collections">Browse collections</FluentAnchor> to get started.
-        </FluentMessageBar>
+        <div class="c3d-empty-state" style="margin-top: 2rem;">
+            <div class="c3d-empty-state-icon">
+                <FluentIcon Value="@(new Size48.Cube())" />
+            </div>
+            <p class="c3d-empty-state-title">No models yet</p>
+            <p class="c3d-empty-state-desc">Upload your first STL to a collection to get started.</p>
+            <FluentAnchor Href="/collections" Appearance="Appearance.Accent">Browse collections</FluentAnchor>
+        </div>
     }
 }
 
@@ -182,6 +178,22 @@ else
             _                      => dt.ToString("MMM d, yyyy"),
         };
     }
+
+    private static string StatusLabel(ModelStatus status) => status switch
+    {
+        ModelStatus.Ready      => "Ready",
+        ModelStatus.Processing => "Processing",
+        ModelStatus.Failed     => "Failed",
+        _                      => status.ToString()
+    };
+
+    private static string StatusPillClass(ModelStatus status) => status switch
+    {
+        ModelStatus.Ready      => "status-pill status-ready",
+        ModelStatus.Processing => "status-pill status-processing",
+        ModelStatus.Failed     => "status-pill status-failed",
+        _                      => "status-pill status-pending"
+    };
 
     private sealed record RecentModelRow(
         string Name,

@@ -1,0 +1,28 @@
+.col-header-left {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    flex: 1;
+    min-width: 0;
+}
+
+.col-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+}
+
+.col-meta-card {
+    background: var(--c3d-surface-card);
+    border: 1px solid var(--c3d-border);
+    border-radius: var(--c3d-radius-lg);
+    padding: 0.75rem 1.25rem;
+    margin-bottom: 2rem;
+    max-width: 560px;
+}
+
+.models-section-header {
+    margin-bottom: 0.25rem;
+}

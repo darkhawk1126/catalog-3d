@@ -1,0 +1,716 @@
+/* =============================================================
+   catalog·3d admin theme
+   "Machine shop / CAD / maker" — dark-first, filament-heat accent
+   Works WITH FluentUI's design token system.
+   ============================================================= */
+
+/* ── Vendored font: JetBrains Mono ─────────────────────────── */
+@font-face {
+    font-family: 'JetBrains Mono';
+    src: url('/fonts/JetBrainsMono-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'JetBrains Mono';
+    src: url('/fonts/JetBrainsMono-Medium.ttf') format('truetype');
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'JetBrains Mono';
+    src: url('/fonts/JetBrainsMono-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+}
+
+/* ── App-level CSS variables ────────────────────────────────── */
+:root {
+    /* Filament-heat accent — warm metallic orange-amber */
+    --c3d-accent: #E8792A;
+    --c3d-accent-dim: #c05f14;
+    --c3d-accent-glow: rgba(232, 121, 42, 0.18);
+    --c3d-accent-text: #fff5ee;
+
+    /* Status palette */
+    --c3d-status-ready-bg:      rgba(34, 197, 94, 0.15);
+    --c3d-status-ready-border:  rgba(34, 197, 94, 0.5);
+    --c3d-status-ready-text:    #4ade80;
+    --c3d-status-processing-bg:      rgba(232, 121, 42, 0.15);
+    --c3d-status-processing-border:  rgba(232, 121, 42, 0.5);
+    --c3d-status-processing-text:    #fb923c;
+    --c3d-status-failed-bg:     rgba(239, 68, 68, 0.15);
+    --c3d-status-failed-border: rgba(239, 68, 68, 0.5);
+    --c3d-status-failed-text:   #f87171;
+    --c3d-status-pending-bg:    rgba(148, 163, 184, 0.12);
+    --c3d-status-pending-border: rgba(148, 163, 184, 0.35);
+    --c3d-status-pending-text:  #94a3b8;
+
+    /* Surface depth — layered elevation */
+    --c3d-surface-0: #0d0f12;
+    --c3d-surface-1: #13161b;
+    --c3d-surface-2: #1a1e25;
+    --c3d-surface-3: #21262f;
+    --c3d-surface-card: #181c23;
+    --c3d-border: rgba(255, 255, 255, 0.07);
+    --c3d-border-strong: rgba(255, 255, 255, 0.12);
+
+    /* Monospace family */
+    --c3d-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', ui-monospace, monospace;
+
+    /* Layout */
+    --c3d-header-height: 52px;
+    --c3d-nav-width: 220px;
+    --c3d-content-padding: 1.5rem 2rem;
+    --c3d-radius-sm: 4px;
+    --c3d-radius-md: 8px;
+    --c3d-radius-lg: 12px;
+}
+
+/* Light-mode overrides — keep usable, just inverted.
+   Fluent's JS sets body[data-theme="light"|"dark"] via UpdateBodyDataSetTheme(). */
+body[data-theme="light"] {
+    --c3d-surface-0: #f0f2f5;
+    --c3d-surface-1: #f8f9fb;
+    --c3d-surface-2: #ffffff;
+    --c3d-surface-3: #ffffff;
+    --c3d-surface-card: #ffffff;
+    --c3d-border: rgba(0, 0, 0, 0.08);
+    --c3d-border-strong: rgba(0, 0, 0, 0.14);
+    --c3d-status-ready-text:    #16a34a;
+    --c3d-status-processing-text: #c05f14;
+    --c3d-status-failed-text:   #dc2626;
+    --c3d-status-pending-text:  #64748b;
+}
+
+/* ── Global resets & base ───────────────────────────────────── */
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+}
+
+/* ── Static dark baseline ───────────────────────────────────── */
+/* Applied unconditionally so there is no white flash before the
+   Fluent JS web-component upgrade fires and sets body[data-theme]. */
+html {
+    background: var(--c3d-surface-0);
+}
+
+body {
+    background: var(--c3d-surface-0);
+    color: var(--neutral-foreground-rest, #e8eaed);
+}
+
+/* ── Fluent shell overrides ─────────────────────────────────── */
+
+/* Header bar — FluentHeader renders as <header class="header"> */
+.header {
+    background: var(--c3d-surface-1) !important;
+    border-bottom: 1px solid var(--c3d-border-strong) !important;
+    height: var(--c3d-header-height) !important;
+}
+
+/* FluentLayout wrapper — <div class="layout"> */
+.layout {
+    background: var(--c3d-surface-0);
+}
+
+/* Nav sidebar — FluentNavMenu renders as <div class="fluent-nav-menu main-layout-navmenu">
+   Note: it is a div with those classes, NOT a custom element <fluent-nav-menu>. */
+.fluent-nav-menu,
+.main-layout-navmenu {
+    background: var(--c3d-surface-1) !important;
+    border-right: 1px solid var(--c3d-border) !important;
+}
+
+/* Nav item backgrounds — Fluent renders .positioning-region inside .fluent-nav-item */
+.fluent-nav-item .positioning-region {
+    background: transparent !important;
+}
+
+.fluent-nav-item .positioning-region:hover {
+    background: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Active nav item — Fluent adds class "active" to the anchor inside .fluent-nav-link */
+.fluent-nav-item .active .positioning-region,
+.fluent-nav-item a.active .positioning-region {
+    background: var(--c3d-accent-glow) !important;
+}
+
+/* Active indicator bar is rendered via ::before on the positioning-region —
+   override its accent color to use our token */
+.fluent-nav-item .active .positioning-region::before {
+    background: var(--c3d-accent) !important;
+}
+
+/* Nav link text color */
+.fluent-nav-item .fluent-nav-link,
+.fluent-nav-item a {
+    color: var(--neutral-foreground-rest, #e8eaed) !important;
+    text-decoration: none !important;
+}
+
+.fluent-nav-item a.active,
+.fluent-nav-item .fluent-nav-link.active {
+    color: var(--c3d-accent) !important;
+}
+
+/* Nav expander (hamburger toggle) — keep it light on dark */
+.fluent-nav-item.expander .content-region svg {
+    fill: var(--neutral-foreground-rest, #e8eaed) !important;
+}
+
+/* Body content area — FluentBodyContent renders as <div class="body-content"> */
+.body-content {
+    background: var(--c3d-surface-0) !important;
+}
+
+/* ── Wordmark ────────────────────────────────────────────────── */
+.c3d-wordmark {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0;
+    font-family: var(--c3d-mono);
+    font-weight: 700;
+    font-size: 1.05rem;
+    letter-spacing: -0.03em;
+    text-decoration: none;
+    user-select: none;
+    line-height: 1;
+}
+
+.c3d-wordmark-catalog {
+    color: var(--neutral-foreground-rest, #e8eaed);
+}
+
+.c3d-wordmark-sep {
+    color: var(--c3d-accent);
+    margin: 0 1px;
+    font-weight: 400;
+}
+
+.c3d-wordmark-3d {
+    color: var(--c3d-accent);
+    font-weight: 700;
+}
+
+/* ── Status pills ────────────────────────────────────────────── */
+.status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--c3d-mono);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: var(--c3d-radius-sm);
+    border: 1px solid;
+    white-space: nowrap;
+}
+
+.status-pill::before {
+    content: '';
+    display: block;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.status-pill.status-ready {
+    background: var(--c3d-status-ready-bg);
+    border-color: var(--c3d-status-ready-border);
+    color: var(--c3d-status-ready-text);
+}
+.status-pill.status-ready::before { background: var(--c3d-status-ready-text); }
+
+.status-pill.status-processing {
+    background: var(--c3d-status-processing-bg);
+    border-color: var(--c3d-status-processing-border);
+    color: var(--c3d-status-processing-text);
+    animation: c3d-pulse-border 2s ease-in-out infinite;
+}
+.status-pill.status-processing::before {
+    background: var(--c3d-status-processing-text);
+    animation: c3d-pulse-dot 2s ease-in-out infinite;
+}
+
+.status-pill.status-failed {
+    background: var(--c3d-status-failed-bg);
+    border-color: var(--c3d-status-failed-border);
+    color: var(--c3d-status-failed-text);
+}
+.status-pill.status-failed::before { background: var(--c3d-status-failed-text); }
+
+.status-pill.status-pending {
+    background: var(--c3d-status-pending-bg);
+    border-color: var(--c3d-status-pending-border);
+    color: var(--c3d-status-pending-text);
+}
+.status-pill.status-pending::before { background: var(--c3d-status-pending-text); }
+
+@keyframes c3d-pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+@keyframes c3d-pulse-border {
+    0%, 100% { box-shadow: none; }
+    50% { box-shadow: 0 0 0 1px var(--c3d-status-processing-border); }
+}
+
+/* ── Monospace metadata ──────────────────────────────────────── */
+.meta-mono {
+    font-family: var(--c3d-mono);
+    font-size: 0.8125rem;
+    color: var(--neutral-foreground-hint, #8b949e);
+    letter-spacing: 0.01em;
+}
+
+.meta-mono-value {
+    font-family: var(--c3d-mono);
+    font-size: 0.875rem;
+    color: var(--neutral-foreground-rest, #c9d1d9);
+}
+
+code, .c3d-code {
+    font-family: var(--c3d-mono) !important;
+    font-size: 0.8em;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--c3d-border);
+    border-radius: 3px;
+    padding: 2px 6px;
+    color: var(--c3d-accent);
+}
+
+/* ── Card grid — thumbnail-hero layout ──────────────────────── */
+.c3d-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 1.25rem;
+}
+
+.c3d-model-card {
+    background: var(--c3d-surface-card);
+    border: 1px solid var(--c3d-border);
+    border-radius: var(--c3d-radius-lg);
+    overflow: hidden;
+    transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+    display: flex;
+    flex-direction: column;
+    cursor: pointer;
+    text-decoration: none;
+    color: inherit;
+}
+
+.c3d-model-card:hover {
+    border-color: var(--c3d-border-strong);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35),
+                0 0 0 1px rgba(232, 121, 42, 0.15);
+}
+
+.c3d-model-card-thumb {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    background: var(--c3d-surface-2);
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.c3d-model-card-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.c3d-model-card-thumb-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    width: 100%;
+    height: 100%;
+    color: var(--neutral-foreground-hint, #6b7280);
+    background: linear-gradient(135deg, var(--c3d-surface-2) 0%, var(--c3d-surface-3) 100%);
+}
+
+.c3d-model-card-thumb-empty svg {
+    opacity: 0.3;
+}
+
+.c3d-model-card-body {
+    padding: 0.875rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    flex: 1;
+}
+
+.c3d-model-card-name {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--neutral-foreground-rest, #e8eaed);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.3;
+}
+
+.c3d-model-card-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.c3d-model-card-date {
+    font-family: var(--c3d-mono);
+    font-size: 0.7rem;
+    color: var(--neutral-foreground-hint, #6b7280);
+    letter-spacing: 0.02em;
+}
+
+/* ── Page sections ───────────────────────────────────────────── */
+.c3d-page-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.75rem;
+    flex-wrap: wrap;
+}
+
+.c3d-page-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--neutral-foreground-rest, #e8eaed);
+    letter-spacing: -0.02em;
+    flex: 1;
+    min-width: 0;
+}
+
+.c3d-section-label {
+    font-family: var(--c3d-mono);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--neutral-foreground-hint, #6b7280);
+    margin-bottom: 0.75rem;
+    display: block;
+}
+
+/* ── Stat cards ──────────────────────────────────────────────── */
+.c3d-stat-card {
+    background: var(--c3d-surface-card) !important;
+    border: 1px solid var(--c3d-border) !important;
+    border-radius: var(--c3d-radius-lg) !important;
+    padding: 1.25rem !important;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    position: relative;
+    overflow: hidden;
+}
+
+.c3d-stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--c3d-accent) 0%, transparent 100%);
+    opacity: 0.7;
+}
+
+.c3d-stat-icon-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: var(--c3d-radius-md);
+    background: var(--c3d-accent-glow);
+    border: 1px solid rgba(232, 121, 42, 0.2);
+    flex-shrink: 0;
+    color: var(--c3d-accent);
+}
+
+.c3d-stat-value {
+    font-family: var(--c3d-mono);
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--neutral-foreground-rest, #e8eaed);
+    letter-spacing: -0.03em;
+}
+
+.c3d-stat-label {
+    font-size: 0.8125rem;
+    color: var(--neutral-foreground-hint, #6b7280);
+    font-weight: 500;
+}
+
+/* ── Empty state ─────────────────────────────────────────────── */
+.c3d-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    padding: 4rem 2rem;
+    text-align: center;
+    color: var(--neutral-foreground-hint, #6b7280);
+    border: 1px dashed var(--c3d-border);
+    border-radius: var(--c3d-radius-lg);
+    background: var(--c3d-surface-1);
+}
+
+.c3d-empty-state-icon {
+    opacity: 0.25;
+    color: var(--c3d-accent);
+}
+
+.c3d-empty-state-title {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--neutral-foreground-rest, #e8eaed);
+    margin: 0;
+}
+
+.c3d-empty-state-desc {
+    font-size: 0.875rem;
+    margin: 0;
+    max-width: 32ch;
+    line-height: 1.5;
+}
+
+/* ── Upload drop zone ────────────────────────────────────────── */
+.c3d-drop-zone {
+    border: 2px dashed var(--c3d-border-strong);
+    border-radius: var(--c3d-radius-lg);
+    padding: 2.5rem 2rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    background: var(--c3d-surface-1);
+    text-align: center;
+}
+
+.c3d-drop-zone:hover {
+    border-color: var(--c3d-accent);
+    background: var(--c3d-accent-glow);
+}
+
+/* ── Form card surfaces ──────────────────────────────────────── */
+.c3d-form-card {
+    background: var(--c3d-surface-card) !important;
+    border: 1px solid var(--c3d-border) !important;
+    border-radius: var(--c3d-radius-lg) !important;
+    padding: 1.5rem !important;
+}
+
+/* ── Metadata table rows ─────────────────────────────────────── */
+.c3d-meta-row {
+    display: grid;
+    grid-template-columns: 9rem 1fr;
+    gap: 0.5rem 1rem;
+    align-items: baseline;
+    padding: 0.4375rem 0;
+    border-bottom: 1px solid var(--c3d-border);
+}
+
+.c3d-meta-row:last-child {
+    border-bottom: none;
+}
+
+.c3d-meta-key {
+    font-family: var(--c3d-mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--neutral-foreground-hint, #6b7280);
+}
+
+.c3d-meta-val {
+    font-family: var(--c3d-mono);
+    font-size: 0.875rem;
+    color: var(--neutral-foreground-rest, #e8eaed);
+    word-break: break-all;
+}
+
+/* ── Fluent DataGrid: tighten & style ───────────────────────── */
+fluent-data-grid {
+    --grid-row-height: 44px;
+}
+
+/* ── Loading ring — accent color ────────────────────────────── */
+fluent-progress-ring {
+    --accent-fill-rest: var(--c3d-accent) !important;
+}
+
+/* ── Accent button override (Appearance.Accent) ─────────────── */
+fluent-button[appearance="accent"]::part(control) {
+    background: var(--c3d-accent) !important;
+    border-color: var(--c3d-accent) !important;
+    color: #fff !important;
+}
+
+fluent-button[appearance="accent"]:hover::part(control),
+fluent-button[appearance="accent"]:focus-visible::part(control) {
+    background: var(--c3d-accent-dim) !important;
+    border-color: var(--c3d-accent-dim) !important;
+}
+
+/* ── Breadcrumb refinement ───────────────────────────────────── */
+.c3d-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.8125rem;
+    color: var(--neutral-foreground-hint, #6b7280);
+    margin-bottom: 0.25rem;
+    flex-wrap: wrap;
+}
+
+.c3d-breadcrumb a {
+    color: var(--neutral-foreground-hint, #6b7280);
+    text-decoration: none;
+    transition: color 0.1s;
+}
+
+.c3d-breadcrumb a:hover {
+    color: var(--c3d-accent);
+}
+
+.c3d-breadcrumb-sep {
+    color: var(--c3d-border-strong);
+    user-select: none;
+}
+
+.c3d-breadcrumb-current {
+    color: var(--neutral-foreground-rest, #e8eaed);
+}
+
+/* ── Dev-login page ──────────────────────────────────────────── */
+.c3d-login-root {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background:
+        radial-gradient(ellipse 80% 60% at 50% 0%, rgba(232, 121, 42, 0.07) 0%, transparent 60%),
+        var(--c3d-surface-0);
+    padding: 2rem;
+}
+
+.c3d-login-panel {
+    width: 100%;
+    max-width: 420px;
+    background: var(--c3d-surface-2);
+    border: 1px solid var(--c3d-border-strong);
+    border-radius: var(--c3d-radius-lg);
+    padding: 2.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    box-shadow:
+        0 0 0 1px rgba(232, 121, 42, 0.08),
+        0 24px 64px rgba(0, 0, 0, 0.5);
+}
+
+.c3d-login-brand {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    text-align: center;
+}
+
+.c3d-login-brand-icon {
+    width: 52px;
+    height: 52px;
+    border-radius: var(--c3d-radius-md);
+    background: var(--c3d-accent-glow);
+    border: 1px solid rgba(232, 121, 42, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--c3d-accent);
+}
+
+.c3d-login-title {
+    font-size: 1.375rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--neutral-foreground-rest, #e8eaed);
+    margin: 0;
+}
+
+.c3d-login-subtitle {
+    font-size: 0.875rem;
+    color: var(--neutral-foreground-hint, #6b7280);
+    margin: 0;
+    line-height: 1.4;
+}
+
+.c3d-login-divider {
+    height: 1px;
+    background: var(--c3d-border);
+    margin: 0 -2.5rem;
+}
+
+.c3d-login-env-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--c3d-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--c3d-status-processing-text);
+    background: var(--c3d-status-processing-bg);
+    border: 1px solid var(--c3d-status-processing-border);
+    padding: 3px 8px;
+    border-radius: var(--c3d-radius-sm);
+    align-self: flex-start;
+}
+
+.c3d-login-env-badge::before {
+    content: '';
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: c3d-pulse-dot 2s ease-in-out infinite;
+}
+
+/* Content padding tightened for admin density */
+article.content {
+    padding: 1.5rem 2rem;
+}
+
+@media (max-width: 640px) {
+    article.content {
+        padding: 1rem;
+    }
+}
