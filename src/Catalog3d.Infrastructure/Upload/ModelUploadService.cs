@@ -65,7 +65,7 @@ internal sealed class ModelUploadService(
         // --- 3. Validate binary-STL signature ---
         if (headerRead < MinStlSize)
         {
-            await fileStore.DeleteAsync(blobKey, "blobs", ct).ConfigureAwait(false);
+            await DeleteBlobIfUnreferencedAsync(blobKey, ct).ConfigureAwait(false);
             return new ModelUploadResult.InvalidContent(
                 $"File is too short ({headerRead} bytes); binary STL requires at least {MinStlSize} bytes.");
         }
@@ -78,7 +78,7 @@ internal sealed class ModelUploadService(
 
         if (actualSize != expectedFileSize)
         {
-            await fileStore.DeleteAsync(blobKey, "blobs", ct).ConfigureAwait(false);
+            await DeleteBlobIfUnreferencedAsync(blobKey, ct).ConfigureAwait(false);
             return new ModelUploadResult.InvalidContent(
                 $"Binary STL declares {triCount} triangles (expected {expectedFileSize} bytes) " +
                 $"but file is {actualSize} bytes.");
@@ -95,7 +95,7 @@ internal sealed class ModelUploadService(
 
         if (slugExists)
         {
-            await fileStore.DeleteAsync(blobKey, "blobs", ct).ConfigureAwait(false);
+            await DeleteBlobIfUnreferencedAsync(blobKey, ct).ConfigureAwait(false);
             logger.LogWarning("Upload rejected: slug '{Slug}' already exists (pre-check).", slug);
             return new ModelUploadResult.SlugConflict(slug);
         }
@@ -141,7 +141,7 @@ internal sealed class ModelUploadService(
             // Slug already exists — clean up the orphaned blob and report the conflict.
             db.Models.Remove(model);
             db.ModelFiles.Remove(modelFile);
-            await fileStore.DeleteAsync(blobKey, "blobs", ct).ConfigureAwait(false);
+            await DeleteBlobIfUnreferencedAsync(blobKey, ct).ConfigureAwait(false);
 
             logger.LogWarning("Upload rejected: slug '{Slug}' already exists.", slug);
             return new ModelUploadResult.SlugConflict(slug);
@@ -164,6 +164,27 @@ internal sealed class ModelUploadService(
                 chars[i] = '-';
         }
         return new string(chars).Trim('-');
+    }
+
+    // Content-addressed blobs are deduplicated, so one key can back multiple models. During
+    // cleanup of a failed/rejected upload, only delete the blob when no other ModelFile still
+    // references it — otherwise a duplicate-content upload that hits a slug conflict (or fails
+    // validation) would orphan a sibling model that shares the identical blob.
+    private async Task DeleteBlobIfUnreferencedAsync(string blobKey, CancellationToken ct)
+    {
+        bool stillReferenced = await db.ModelFiles
+            .AnyAsync(f => f.BlobKey == blobKey, ct)
+            .ConfigureAwait(false);
+
+        if (stillReferenced)
+        {
+            logger.LogDebug(
+                "Retained content-addressed blob {BlobKey}; still referenced by another model.",
+                blobKey);
+            return;
+        }
+
+        await fileStore.DeleteAsync(blobKey, "blobs", ct).ConfigureAwait(false);
     }
 
     // Postgres unique-constraint violation code is "23505"; EF wraps it in DbUpdateException.

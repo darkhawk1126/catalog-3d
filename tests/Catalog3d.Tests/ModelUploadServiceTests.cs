@@ -159,6 +159,30 @@ public sealed class ModelUploadServiceTests : IDisposable
         _ = blobsBeforeConflict; // referenced to suppress unused warning
     }
 
+    [Fact]
+    public async Task Upload_DuplicateSlug_SameContent_DoesNotDeleteSharedBlob()
+    {
+        // Regression: content-addressed dedup means the same bytes produce the same blob key.
+        // A second upload of identical content that hits a slug conflict must NOT delete the
+        // shared blob — the first model still references it. (Found by running the real stack:
+        // the orphan-cleanup was deleting a blob a sibling model depended on, failing its render.)
+        var svc = BuildService();
+        var content = BuildValidStl(triangles: 1);
+
+        var first = MakeRequest(content, "widget.stl");
+        var success = Assert.IsType<ModelUploadResult.Success>(await svc.UploadAsync(first));
+        var sharedKey = success.File.BlobKey;
+
+        // Identical content (same dedup'd key) + same filename (same slug) → conflict.
+        var second = MakeRequest(content, "widget.stl");
+        Assert.IsType<ModelUploadResult.SlugConflict>(await svc.UploadAsync(second));
+
+        // The shared blob survives; nothing was deleted.
+        Assert.True(await _fileStore.ExistsAsync(sharedKey, "blobs"));
+        Assert.Equal(1, _fileStore.ExistingKeyCount);
+        Assert.Equal(0, _fileStore.DeleteCallCount);
+    }
+
     // -------------------------------------------------------------------------
     // Empty slug → InvalidSlug
     // -------------------------------------------------------------------------
