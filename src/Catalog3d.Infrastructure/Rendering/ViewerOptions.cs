@@ -27,4 +27,15 @@ public sealed class ViewerOptions
 
     /// <summary>Soft UX file-size warning threshold in bytes. Default 50 MiB.</summary>
     public long MaxFileSizeBytes { get; set; } = 50 * 1024 * 1024;
+
+    /// <summary>
+    /// The CSP <c>frame-ancestors</c> source list for the /viewer and /viewer/embed routes —
+    /// i.e. which origins may iframe the viewer. Space-separated, CSP syntax. Defaults to the
+    /// homelab wiki hosts; override per environment (e.g. to add a dev wiki origin).
+    ///
+    /// The deployed homelab wiki is mediawiki.mallcop.dev; wiki.mallcop.dev is kept as an
+    /// accepted alias. All other routes always send <c>frame-ancestors 'none'</c>.
+    /// </summary>
+    public string FrameAncestors { get; set; } =
+        "'self' https://mediawiki.mallcop.dev https://wiki.mallcop.dev";
 }

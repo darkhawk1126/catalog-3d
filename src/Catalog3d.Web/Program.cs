@@ -70,6 +70,12 @@ if (app.Environment.IsDevelopment())
 }
 
 // L8: security headers — applied to every response before any content is written.
+// The set of origins permitted to iframe the viewer is config-driven (Viewer:FrameAncestors)
+// so the deployed wiki host can be set per environment without a code change.
+var viewerFrameAncestors = app.Services
+    .GetRequiredService<Microsoft.Extensions.Options.IOptions<ViewerOptions>>()
+    .Value.FrameAncestors;
+
 app.Use(async (ctx, next) =>
 {
     // Prevent MIME sniffing that could turn a benign blob download into an executable.
@@ -87,12 +93,12 @@ app.Use(async (ctx, next) =>
     }
 
     // L8: frame-ancestors — explicit decision for wiki embedding.
-    // The wiki (wiki.mallcop.dev) is the only permitted framing origin.
-    // The interactive viewer route (/viewer/*) must be embeddable from the wiki;
-    // all other routes should disallow framing to prevent clickjacking.
+    // The viewer routes (/viewer and /viewer/embed/*) must be embeddable from the wiki;
+    // all other routes disallow framing to prevent clickjacking. The permitted origins come
+    // from Viewer:FrameAncestors (defaults to the homelab wiki hosts).
     if (ctx.Request.Path.StartsWithSegments("/viewer", StringComparison.OrdinalIgnoreCase))
     {
-        ctx.Response.Headers["Content-Security-Policy"] = "frame-ancestors 'self' https://wiki.mallcop.dev";
+        ctx.Response.Headers["Content-Security-Policy"] = $"frame-ancestors {viewerFrameAncestors}";
         ctx.Response.Headers["X-Frame-Options"] = "ALLOWALL"; // superseded by CSP; kept for older clients
     }
     else
