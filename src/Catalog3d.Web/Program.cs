@@ -1,3 +1,4 @@
+using Catalog3d.Application.Abstractions;
 using Catalog3d.Infrastructure.Rendering;
 using Catalog3d.Infrastructure.Upload;
 using Catalog3d.Web.Auth;
@@ -107,6 +108,21 @@ app.UseStaticFiles();
 app.UseAntiforgery();
 app.UseAuthentication();
 app.UseAuthorization();
+
+// Auto-provision each authenticated principal's personal collection on first sighting.
+// Runs after authentication so ctx.User is populated; the provisioner self-suppresses for
+// already-provisioned principals (singleton cache), so this is a no-op on the hot path.
+app.Use(async (ctx, next) =>
+{
+    if (ctx.User.Identity?.IsAuthenticated is true)
+    {
+        var userContext = ctx.RequestServices.GetRequiredService<IUserContext>();
+        var provisioner = ctx.RequestServices.GetRequiredService<IPersonalCollectionProvisioner>();
+        await provisioner.EnsureProvisionedAsync(userContext, ctx.RequestAborted);
+    }
+
+    await next();
+});
 
 // L9: /challenge triggers an ASP.NET Core challenge against the default challenge scheme
 // (OidcScheme when Auth:Provider=Oidc). RedirectToLogin and DevLogin.razor both reference

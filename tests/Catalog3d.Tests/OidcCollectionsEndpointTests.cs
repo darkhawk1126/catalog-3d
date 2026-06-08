@@ -153,7 +153,7 @@ public sealed class OidcCollectionsEndpointTests
     // -------------------------------------------------------------------------
 
     [Fact]
-    public async Task GetCollections_NoAssignment_ReturnsEmptyArray()
+    public async Task GetCollections_NoAssignment_ReturnsOnlyOwnPersonalCollection()
     {
         await using var factory = OidcCollectionsFixture.Authenticated(
             userId: $"user:{SubNoAccess}",
@@ -172,7 +172,13 @@ public sealed class OidcCollectionsEndpointTests
 
         var dtos = await response.Content.ReadFromJsonAsync<CollectionDto[]>();
         Assert.NotNull(dtos);
-        Assert.Empty(dtos);
+
+        // A user with no explicit role assignment is auto-provisioned a personal collection
+        // (their "folder") and made Admin of it. They must see exactly that one collection —
+        // never someone else's (ColPublic), which they hold no role on.
+        var only = Assert.Single(dtos);
+        Assert.StartsWith("u-", only.Slug, StringComparison.Ordinal);
+        Assert.NotEqual(ColPublic, only.Id);
     }
 
     // -------------------------------------------------------------------------

@@ -13,6 +13,7 @@ public sealed record ModelDto(
     string Description,
     string Owner,
     string Status,
+    string Visibility,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt)
 {
@@ -24,6 +25,7 @@ public sealed record ModelDto(
         m.Description,
         m.Owner,
         m.Status.ToString(),
+        m.Visibility.ToString(),
         m.CreatedAt,
         m.UpdatedAt);
 }

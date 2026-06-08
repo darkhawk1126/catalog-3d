@@ -1,4 +1,5 @@
 using Catalog3d.Domain.Entities;
+using Catalog3d.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -43,6 +44,15 @@ internal sealed class ModelConfiguration : IEntityTypeConfiguration<Model>
             .HasMaxLength(50)
             .IsRequired();
 
+        // Stored as string (like Status) for human-readable schema reads. Defaults to Private so
+        // pre-existing rows and new uploads are owner-only until explicitly shared/published.
+        builder.Property(m => m.Visibility)
+            .HasColumnName("visibility")
+            .HasConversion<string>()
+            .HasMaxLength(50)
+            .HasDefaultValue(ModelVisibility.Private)
+            .IsRequired();
+
         builder.Property(m => m.CreatedAt)
             .HasColumnName("created_at")
             .IsRequired();
@@ -60,6 +70,11 @@ internal sealed class ModelConfiguration : IEntityTypeConfiguration<Model>
         builder.HasMany(m => m.Files)
             .WithOne(f => f.Model)
             .HasForeignKey(f => f.ModelId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasMany(m => m.Shares)
+            .WithOne(s => s.Model)
+            .HasForeignKey(s => s.ModelId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 }

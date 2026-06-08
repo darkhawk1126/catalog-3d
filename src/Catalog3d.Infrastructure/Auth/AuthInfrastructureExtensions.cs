@@ -1,4 +1,5 @@
 using Catalog3d.Application.Abstractions;
+using Catalog3d.Infrastructure.Provisioning;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -34,12 +35,18 @@ public static class AuthInfrastructureExtensions
     }
 
     /// <summary>
-    /// Registers the EF Core-backed ICollectionAuthorizationService.
-    /// Scoped lifetime matches CatalogDbContext.
+    /// Registers the EF Core-backed ICollectionAuthorizationService and the model-level
+    /// IModelAuthorizationService that builds on it. Scoped lifetime matches CatalogDbContext.
     /// </summary>
     public static IServiceCollection AddCollectionAuthorization(this IServiceCollection services)
     {
         services.AddScoped<ICollectionAuthorizationService, CollectionAuthorizationService>();
+        services.AddScoped<IModelAuthorizationService, ModelAuthorizationService>();
+
+        // Personal-collection provisioning: scoped service (owns a request DbContext) backed by
+        // a singleton cache so it is a no-op after a principal's first authenticated request.
+        services.AddSingleton<ProvisionedPrincipalCache>();
+        services.AddScoped<IPersonalCollectionProvisioner, PersonalCollectionProvisioner>();
         return services;
     }
 }

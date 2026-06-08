@@ -78,6 +78,26 @@ internal static class EndpointRegistration
         models.MapGet("/files/{fileId:guid}", GetModelFileAsync)
             .RequireAuthorization();
 
+        // --- Per-model sharing management (owner / collection-admin / site-admin only) ---
+
+        // PUT /api/v1/models/{slug}/visibility — set Private | Shared | Public
+        models.MapPut("/{slug}/visibility", SetModelVisibilityAsync)
+            .RequireAuthorization()
+            .DisableAntiforgery();
+
+        // GET /api/v1/models/{slug}/shares — list the principals a Shared model is shared with
+        models.MapGet("/{slug}/shares", GetModelSharesAsync)
+            .RequireAuthorization();
+
+        // POST /api/v1/models/{slug}/shares — grant Download to a principal (body: { principal })
+        models.MapPost("/{slug}/shares", AddModelShareAsync)
+            .RequireAuthorization()
+            .DisableAntiforgery();
+
+        // DELETE /api/v1/models/{slug}/shares?principal=... — revoke a principal's share
+        models.MapDelete("/{slug}/shares", RemoveModelShareAsync)
+            .RequireAuthorization();
+
         // Viewer
         // GET /viewer/{fileId} — Download-gated embeddable HTML viewer
         // Returns a self-contained HTML page that bootstraps the three.js STL viewer.
@@ -85,6 +105,16 @@ internal static class EndpointRegistration
         // The viewer JS fetches geometry via: GET /api/v1/models/files/{fileId}
         // Route is intentionally outside /api/v1 so it is directly iframe-able from the wiki.
         app.MapGet("/viewer/{fileId:guid}", GetViewerAsync)
+            .RequireAuthorization();
+
+        // GET /viewer/embed/{collectionSlug}/{modelSlug} — the wiki-facing embed.
+        // Resolves the caller's model-level access and gracefully downgrades:
+        //   Download tier → interactive three.js viewer (geometry-equivalent)
+        //   Preview tier  → static PNG + "preview only" message (no geometry)
+        //   no access     → 404 (Private models stay invisible to non-owners)
+        // Lives under /viewer so it inherits the frame-ancestors CSP in Program.cs that
+        // permits embedding from https://wiki.mallcop.dev.
+        app.MapGet("/viewer/embed/{collectionSlug}/{modelSlug}", GetEmbedAsync)
             .RequireAuthorization();
 
         return app;
@@ -196,7 +226,7 @@ internal static class EndpointRegistration
     // -------------------------------------------------------------------------
     private static async Task<IResult> GetModelBySlugAsync(
         string slug,
-        [FromServices] ICollectionAuthorizationService authService,
+        [FromServices] IModelAuthorizationService modelAuth,
         [FromServices] IUserContext userContext,
         [FromServices] CatalogDbContext db,
         CancellationToken cancellationToken)
@@ -209,11 +239,12 @@ internal static class EndpointRegistration
         if (model is null)
             return Results.NotFound();
 
-        var hasAccess = await authService
-            .AuthorizeAsync(model.CollectionId, userContext, CollectionRole.Preview, cancellationToken)
+        // Model-level Preview folds in collection role + per-model visibility/shares, so a model
+        // shared/published to the caller is visible even without a role on the parent collection.
+        var access = await modelAuth.ResolveAsync(model.Id, userContext, cancellationToken)
             .ConfigureAwait(false);
 
-        if (!hasAccess)
+        if (!access.CanPreview)
             return Results.NotFound();
 
         return Results.Ok(ModelDto.FromEntity(model));
@@ -368,7 +399,7 @@ internal static class EndpointRegistration
     private static async Task<IResult> GetModelThumbnailAsync(
         string slug,
         HttpContext httpContext,
-        [FromServices] ICollectionAuthorizationService authService,
+        [FromServices] IModelAuthorizationService modelAuth,
         [FromServices] IUserContext userContext,
         [FromServices] CatalogDbContext db,
         [FromServices] IFileStore fileStore,
@@ -382,12 +413,12 @@ internal static class EndpointRegistration
         if (model is null)
             return Results.NotFound();
 
-        // Collections are invisible to callers without Preview — return 404, not 403.
-        var hasAccess = await authService
-            .AuthorizeAsync(model.CollectionId, userContext, CollectionRole.Preview, cancellationToken)
+        // Preview tier: collection Preview role OR a Shared/Public model (the wiki-embed PNG
+        // grant). Models the caller cannot preview stay invisible — return 404, not 403.
+        var access = await modelAuth.ResolveAsync(model.Id, userContext, cancellationToken)
             .ConfigureAwait(false);
 
-        if (!hasAccess)
+        if (!access.CanPreview)
             return Results.NotFound();
 
         // Thumbnail must be Complete; pending/failed renders are not-found to Preview callers.
@@ -434,7 +465,7 @@ internal static class EndpointRegistration
     // -------------------------------------------------------------------------
     private static async Task<IResult> GetModelFileAsync(
         Guid fileId,
-        [FromServices] ICollectionAuthorizationService authService,
+        [FromServices] IModelAuthorizationService modelAuth,
         [FromServices] IUserContext userContext,
         [FromServices] CatalogDbContext db,
         [FromServices] IFileStore fileStore,
@@ -449,12 +480,12 @@ internal static class EndpointRegistration
         if (modelFile is null)
             return Results.NotFound();
 
-        // viewer ≡ download: both require the Download role. Invisible = 404.
-        var hasAccess = await authService
-            .AuthorizeAsync(modelFile.Model.CollectionId, userContext, CollectionRole.Download, cancellationToken)
+        // viewer ≡ download: geometry is the Download tier, resolved against collection role,
+        // ownership, Public, and explicit shares. Invisible = 404.
+        var access = await modelAuth.ResolveAsync(modelFile.ModelId, userContext, cancellationToken)
             .ConfigureAwait(false);
 
-        if (!hasAccess)
+        if (!access.CanDownload)
             return Results.NotFound();
 
         Stream stream;
@@ -486,7 +517,7 @@ internal static class EndpointRegistration
     // -------------------------------------------------------------------------
     private static async Task<IResult> GetViewerAsync(
         Guid fileId,
-        [FromServices] ICollectionAuthorizationService authService,
+        [FromServices] IModelAuthorizationService modelAuth,
         [FromServices] IUserContext userContext,
         [FromServices] CatalogDbContext db,
         [FromServices] IOptions<ViewerOptions> viewerOptions,
@@ -502,12 +533,12 @@ internal static class EndpointRegistration
         if (modelFile is null)
             return Results.NotFound();
 
-        // Interactive viewer = download equivalent (cornerstone). Same gate as geometry endpoint.
-        var hasAccess = await authService
-            .AuthorizeAsync(modelFile.Model.CollectionId, userContext, CollectionRole.Download, cancellationToken)
+        // Interactive viewer = download equivalent (cornerstone). This direct-link route is strict:
+        // no Download → 404. The graceful PNG downgrade lives in GetEmbedAsync (the wiki embed).
+        var access = await modelAuth.ResolveAsync(modelFile.ModelId, userContext, cancellationToken)
             .ConfigureAwait(false);
 
-        if (!hasAccess)
+        if (!access.CanDownload)
             return Results.NotFound();
 
         var opts = viewerOptions.Value;
@@ -518,6 +549,231 @@ internal static class EndpointRegistration
 
         // SAMEORIGIN allows wiki iframe embedding from the same origin.
         return Results.Content(html, "text/html; charset=utf-8");
+    }
+
+    // -------------------------------------------------------------------------
+    // GET /viewer/embed/{collectionSlug}/{modelSlug}
+    // The wiki-facing embed. Resolves model-level access and downgrades gracefully:
+    //   Download → interactive viewer; Preview → static PNG; none → 404.
+    // -------------------------------------------------------------------------
+    private static async Task<IResult> GetEmbedAsync(
+        string collectionSlug,
+        string modelSlug,
+        [FromServices] IModelAuthorizationService modelAuth,
+        [FromServices] IUserContext userContext,
+        [FromServices] CatalogDbContext db,
+        [FromServices] IOptions<ViewerOptions> viewerOptions,
+        [FromServices] IWebHostEnvironment env,
+        CancellationToken cancellationToken)
+    {
+        var model = await db.Models
+            .AsNoTracking()
+            .Include(m => m.Collection)
+            .FirstOrDefaultAsync(m => m.Slug == modelSlug, cancellationToken)
+            .ConfigureAwait(false);
+
+        // The collection slug must match: it makes embed URLs self-documenting (user/model) and
+        // stops a stale wiki link from resolving a model that was moved to another folder.
+        if (model is null
+            || !string.Equals(model.Collection.Slug, collectionSlug, StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.NotFound();
+        }
+
+        var access = await modelAuth.ResolveAsync(model.Id, userContext, cancellationToken)
+            .ConfigureAwait(false);
+
+        // Download tier → interactive viewer (geometry-equivalent).
+        if (access.CanDownload)
+        {
+            var stl = await db.ModelFiles
+                .AsNoTracking()
+                .FirstOrDefaultAsync(
+                    f => f.ModelId == model.Id && f.Kind == ModelFileKind.Stl,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (stl is null)
+                return Results.NotFound();
+
+            var geometryUrl = viewerOptions.Value.GeometryUrlPattern.Replace(
+                "{fileId}", stl.Id.ToString("D"), StringComparison.Ordinal);
+
+            return Results.Content(BuildViewerHtml(env, geometryUrl), "text/html; charset=utf-8");
+        }
+
+        // Preview tier → static PNG only (no geometry ever reaches this browser).
+        if (access.CanPreview)
+        {
+            var thumbnailUrl = $"/api/v1/models/{Uri.EscapeDataString(model.Slug)}/thumbnail";
+            return Results.Content(
+                BuildPreviewHtml(model.Name, thumbnailUrl), "text/html; charset=utf-8");
+        }
+
+        // Private model, non-owner: stays invisible.
+        return Results.NotFound();
+    }
+
+    // -------------------------------------------------------------------------
+    // PUT /api/v1/models/{slug}/visibility   body: { "visibility": "Private|Shared|Public" }
+    // Manage-gated (owner / collection-Admin / site-admin).
+    // -------------------------------------------------------------------------
+    private static async Task<IResult> SetModelVisibilityAsync(
+        string slug,
+        [FromBody] SetVisibilityRequest request,
+        [FromServices] IModelAuthorizationService modelAuth,
+        [FromServices] IUserContext userContext,
+        [FromServices] CatalogDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var model = await db.Models
+            .FirstOrDefaultAsync(m => m.Slug == slug, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (model is null)
+            return Results.NotFound();
+
+        var access = await modelAuth.ResolveAsync(model.Id, userContext, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!access.CanManage)
+            return access.CanPreview ? Results.Forbid() : Results.NotFound();
+
+        if (!Enum.TryParse<ModelVisibility>(request.Visibility, ignoreCase: true, out var visibility)
+            || !Enum.IsDefined(visibility))
+        {
+            return Results.BadRequest(new { error = "invalid_visibility", allowed = new[] { "Private", "Shared", "Public" } });
+        }
+
+        model.Visibility = visibility;
+        model.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        return Results.Ok(ModelDto.FromEntity(model));
+    }
+
+    // -------------------------------------------------------------------------
+    // GET /api/v1/models/{slug}/shares — Manage-gated list of shared principals.
+    // -------------------------------------------------------------------------
+    private static async Task<IResult> GetModelSharesAsync(
+        string slug,
+        [FromServices] IModelAuthorizationService modelAuth,
+        [FromServices] IUserContext userContext,
+        [FromServices] CatalogDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var model = await db.Models
+            .AsNoTracking()
+            .FirstOrDefaultAsync(m => m.Slug == slug, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (model is null)
+            return Results.NotFound();
+
+        var access = await modelAuth.ResolveAsync(model.Id, userContext, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!access.CanManage)
+            return access.CanPreview ? Results.Forbid() : Results.NotFound();
+
+        var shares = await db.ModelShares
+            .AsNoTracking()
+            .Where(s => s.ModelId == model.Id)
+            .OrderBy(s => s.Principal)
+            .Select(s => new ModelShareDto(s.Principal, s.CreatedAt))
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return Results.Ok(shares);
+    }
+
+    // -------------------------------------------------------------------------
+    // POST /api/v1/models/{slug}/shares   body: { "principal": "user:... | group:... | devuser" }
+    // Manage-gated. Idempotent: re-adding an existing principal is a no-op success.
+    // -------------------------------------------------------------------------
+    private static async Task<IResult> AddModelShareAsync(
+        string slug,
+        [FromBody] AddShareRequest request,
+        [FromServices] IModelAuthorizationService modelAuth,
+        [FromServices] IUserContext userContext,
+        [FromServices] CatalogDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var principal = request.Principal?.Trim();
+        if (string.IsNullOrEmpty(principal))
+            return Results.BadRequest(new { error = "missing_principal" });
+
+        var model = await db.Models
+            .FirstOrDefaultAsync(m => m.Slug == slug, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (model is null)
+            return Results.NotFound();
+
+        var access = await modelAuth.ResolveAsync(model.Id, userContext, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!access.CanManage)
+            return access.CanPreview ? Results.Forbid() : Results.NotFound();
+
+        var exists = await db.ModelShares
+            .AnyAsync(s => s.ModelId == model.Id && s.Principal == principal, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!exists)
+        {
+            db.ModelShares.Add(new ModelShare
+            {
+                ModelId = model.Id,
+                Principal = principal,
+                CreatedAt = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return Results.Created($"/api/v1/models/{Uri.EscapeDataString(slug)}/shares", new ModelShareDto(principal, DateTimeOffset.UtcNow));
+    }
+
+    // -------------------------------------------------------------------------
+    // DELETE /api/v1/models/{slug}/shares?principal=...
+    // Manage-gated. Idempotent: removing an absent principal still returns 204.
+    // -------------------------------------------------------------------------
+    private static async Task<IResult> RemoveModelShareAsync(
+        string slug,
+        [FromQuery] string principal,
+        [FromServices] IModelAuthorizationService modelAuth,
+        [FromServices] IUserContext userContext,
+        [FromServices] CatalogDbContext db,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(principal))
+            return Results.BadRequest(new { error = "missing_principal" });
+
+        var model = await db.Models
+            .FirstOrDefaultAsync(m => m.Slug == slug, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (model is null)
+            return Results.NotFound();
+
+        var access = await modelAuth.ResolveAsync(model.Id, userContext, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!access.CanManage)
+            return access.CanPreview ? Results.Forbid() : Results.NotFound();
+
+        var share = await db.ModelShares
+            .FirstOrDefaultAsync(
+                s => s.ModelId == model.Id && s.Principal == principal.Trim(), cancellationToken)
+            .ConfigureAwait(false);
+
+        if (share is not null)
+        {
+            db.ModelShares.Remove(share);
+            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return Results.NoContent();
     }
 
     // Cached composed HTML: template + inlined bundle. Built once on first request.
@@ -557,5 +813,46 @@ internal static class EndpointRegistration
         // mark the placeholder) with the JSON-serialized value (which carries its own quotes).
         var htmlBase = GetViewerHtmlBase(env);
         return htmlBase.Replace("'{{GEOMETRY_URL}}'", jsonUrl, StringComparison.Ordinal);
+    }
+
+    // Builds the Preview-tier embed page: the static PNG thumbnail plus a short notice that the
+    // interactive model is access-gated. NO geometry URL is emitted here — a Preview-tier caller
+    // must never receive anything from which the STL can be reconstructed (cornerstone rule).
+    // Self-contained so it inherits the same frame-ancestors CSP as the interactive viewer.
+    private static string BuildPreviewHtml(string modelName, string thumbnailUrl)
+    {
+        // HTML-encode untrusted/dynamic values before interpolating into markup/attributes.
+        var name = System.Net.WebUtility.HtmlEncode(modelName);
+        var thumb = System.Net.WebUtility.HtmlEncode(thumbnailUrl);
+
+        return $$"""
+            <!doctype html>
+            <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>{{name}} — preview</title>
+              <style>
+                html,body{margin:0;height:100%;background:#1a1a1a;color:#ddd;
+                  font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+                .wrap{height:100%;display:flex;flex-direction:column;align-items:center;
+                  justify-content:center;gap:.75rem;padding:1rem;box-sizing:border-box}
+                img{max-width:100%;max-height:78%;object-fit:contain;border-radius:6px;
+                  background:#222;box-shadow:0 2px 12px rgba(0,0,0,.5)}
+                .note{font-size:.85rem;opacity:.75;text-align:center;max-width:32rem}
+                .badge{display:inline-block;font-size:.7rem;letter-spacing:.04em;
+                  text-transform:uppercase;background:#333;padding:.2rem .5rem;border-radius:4px}
+              </style>
+            </head>
+            <body>
+              <div class="wrap">
+                <img src="{{thumb}}" alt="Preview of {{name}}">
+                <span class="badge">Preview only</span>
+                <p class="note">You don't have access to the interactive 3D model.
+                  Ask the owner to share it with you to view and download.</p>
+              </div>
+            </body>
+            </html>
+            """;
     }
 }

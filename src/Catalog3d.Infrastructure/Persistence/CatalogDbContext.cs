@@ -11,6 +11,7 @@ public sealed class CatalogDbContext : DbContext
     public DbSet<Collection> Collections { get; init; } = null!;
     public DbSet<Model> Models { get; init; } = null!;
     public DbSet<ModelFile> ModelFiles { get; init; } = null!;
+    public DbSet<ModelShare> ModelShares { get; init; } = null!;
     public DbSet<RoleAssignment> RoleAssignments { get; init; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -18,6 +19,7 @@ public sealed class CatalogDbContext : DbContext
         modelBuilder.ApplyConfiguration(new CollectionConfiguration());
         modelBuilder.ApplyConfiguration(new ModelConfiguration());
         modelBuilder.ApplyConfiguration(new ModelFileConfiguration());
+        modelBuilder.ApplyConfiguration(new ModelShareConfiguration());
         modelBuilder.ApplyConfiguration(new RoleAssignmentConfiguration());
     }
 }
