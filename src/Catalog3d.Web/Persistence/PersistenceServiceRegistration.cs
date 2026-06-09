@@ -38,14 +38,21 @@ internal static class PersistenceServiceRegistration
         services.AddScoped(sp =>
             sp.GetRequiredService<IDbContextFactory<CatalogDbContext>>().CreateDbContext());
 
-        // Auto-apply migrations in Development only.
-        // Read the environment from config; ASPNETCORE_ENVIRONMENT is available in configuration
-        // even before the host is built. Production uses an init container (see DESIGN.md).
+        // Auto-apply migrations on startup when either the environment is Development (always,
+        // for a frictionless local loop) or Database:MigrateOnStartup=true is set explicitly
+        // (production opt-in). The production runtime image is the ASP.NET runtime (no SDK /
+        // dotnet-ef), so an app-side MigrateAsync on boot is simpler than an EF-tools init
+        // container; the chart sets Database:MigrateOnStartup=true and a single-replica Recreate
+        // rollout keeps the boot-time migration safe.
         var aspnetEnv = configuration["ASPNETCORE_ENVIRONMENT"]
             ?? configuration["environment"]
             ?? Environments.Production;
 
-        if (aspnetEnv.Equals(Environments.Development, StringComparison.OrdinalIgnoreCase))
+        var isDevelopment = aspnetEnv.Equals(Environments.Development, StringComparison.OrdinalIgnoreCase);
+        var migrateOnStartup = string.Equals(
+            configuration["Database:MigrateOnStartup"], "true", StringComparison.OrdinalIgnoreCase);
+
+        if (isDevelopment || migrateOnStartup)
             services.AddHostedService<DevelopmentMigrateHostedService>();
 
         return services;

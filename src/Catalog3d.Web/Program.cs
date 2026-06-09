@@ -8,6 +8,7 @@ using Catalog3d.Web.Persistence;
 using Catalog3d.Web.Rendering;
 using Catalog3d.Web.Storage;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.FluentUI.AspNetCore.Components;
 using Scalar.AspNetCore;
 
@@ -60,6 +61,20 @@ builder.Services.AddFluentUIComponents();
 
 // Antiforgery is required by Blazor Server interactive render mode.
 builder.Services.AddAntiforgery();
+
+// DataProtection key ring persistence. In Development the default in-memory/ephemeral key
+// ring is fine (auth cookies + anti-forgery tokens are expected not to survive a restart).
+// In production the key ring MUST be persisted to durable storage, or every pod restart /
+// replica invalidates all existing auth cookies. Set DataProtection:KeyRingPath to a mounted
+// volume (PVC) to enable filesystem persistence; SetApplicationName keeps the ring stable
+// across replicas sharing that path.
+var keyRingPath = builder.Configuration["DataProtection:KeyRingPath"];
+if (!string.IsNullOrWhiteSpace(keyRingPath))
+{
+    builder.Services.AddDataProtection()
+        .PersistKeysToFileSystem(new DirectoryInfo(keyRingPath))
+        .SetApplicationName("catalog-3d");
+}
 
 var app = builder.Build();
 

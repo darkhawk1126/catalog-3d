@@ -29,7 +29,7 @@ internal sealed class DevelopmentMigrateHostedService : IHostedService
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Development: checking for pending EF Core migrations...");
+        _logger.LogInformation("Startup migration check: looking for pending EF Core migrations...");
 
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
