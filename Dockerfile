@@ -12,10 +12,13 @@ COPY tests/Catalog3d.Tests/Catalog3d.Tests.csproj tests/Catalog3d.Tests/
 
 RUN dotnet restore src/Catalog3d.Web/Catalog3d.Web.csproj
 
-# Copy the full source tree and publish
+# Copy the full source tree and publish.
+# NOTE: publish restores here (no --no-restore). A standalone "restore one csproj"
+# + "publish --no-restore" did not compose the Blazor framework static web assets
+# (/_framework/blazor.web.js) into the publish manifest, leaving the interactive UI
+# dead. Letting publish restore composes them correctly.
 COPY . .
 RUN dotnet publish src/Catalog3d.Web/Catalog3d.Web.csproj \
-    --no-restore \
     -c Release \
     -o /app/publish
 
