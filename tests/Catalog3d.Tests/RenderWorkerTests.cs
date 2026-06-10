@@ -194,6 +194,12 @@ public sealed class RenderWorkerTests : IAsyncDisposable
         var thumbCount = await db.ModelFiles.CountAsync(f => f.Kind == ModelFileKind.Thumbnail);
         Assert.Equal(0, thumbCount);
 
+        // Regression: skipping an already-Complete file must still reconcile the parent
+        // model to Ready. The seed model is Processing (as a re-render request leaves it);
+        // the skip path previously returned early, leaving it stuck in Processing forever.
+        var model = await db.Models.FirstAsync();
+        Assert.Equal(ModelStatus.Ready, model.Status);
+
         var jobState = await _queue.GetStateAsync(jobId);
         Assert.Equal(RenderJobState.Complete, jobState);
     }

@@ -114,13 +114,22 @@ internal sealed class RenderWorker : BackgroundService
             }
 
             // Idempotency: the reconciler may re-enqueue a file that was completed by a
-            // concurrent worker between the DB scan and the enqueue call. Skip silently
-            // rather than re-rendering and creating a duplicate Thumbnail row.
+            // concurrent worker between the DB scan and the enqueue call. Skip the (content-
+            // addressed, so unchanged) render rather than re-rendering and creating a duplicate
+            // Thumbnail row. But still reconcile the parent model: a re-render request
+            // (RetriggerRenderAsync) flips the model to Processing, and skipping here without
+            // reconciling would leave it stuck in Processing forever even though the file is done.
             if (stlFile.RenderStatus == RenderStatus.Complete)
             {
                 _logger.LogInformation(
                     "ModelFile {ModelFileId} is already Complete; skipping duplicate job {JobId}.",
                     item.ModelFileId, item.JobId);
+                if (stlFile.Model.Status != ModelStatus.Ready)
+                {
+                    stlFile.Model.Status = ModelStatus.Ready;
+                    stlFile.Model.UpdatedAt = DateTimeOffset.UtcNow;
+                    await db.SaveChangesAsync(ct).ConfigureAwait(false);
+                }
                 _queue.SetState(item.JobId, RenderJobState.Complete);
                 return;
             }
