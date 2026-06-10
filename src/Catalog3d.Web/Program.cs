@@ -180,6 +180,12 @@ app.MapGet("/challenge", async (HttpContext ctx) =>
     await ctx.ChallengeAsync(new AuthenticationProperties { RedirectUri = returnUrl });
 }).AllowAnonymous();
 
+// Map the static-web-assets endpoints (wwwroot + RCL assets + the Blazor framework
+// files served from the staticwebassets manifest, incl. /_framework/blazor.web.js).
+// Required on .NET 9/10: UseStaticFiles() alone does NOT serve _framework, so without
+// this the Blazor Server circuit never starts and the interactive admin UI is dead.
+app.MapStaticAssets();
+
 // REST API endpoints (external contract — stable versioned URLs).
 // Dev-mode login endpoints are mapped inside MapCatalogEndpoints when Auth:Provider=Dev.
 app.MapCatalogEndpoints();
