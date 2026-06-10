@@ -9,6 +9,7 @@ using Catalog3d.Web.Rendering;
 using Catalog3d.Web.Storage;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.FluentUI.AspNetCore.Components;
 using Scalar.AspNetCore;
 
@@ -62,6 +63,22 @@ builder.Services.AddFluentUIComponents();
 // Antiforgery is required by Blazor Server interactive render mode.
 builder.Services.AddAntiforgery();
 
+// Trust the reverse proxy's forwarded headers. Behind Traefik (TLS terminated at the ingress)
+// the app receives plain HTTP on :8080; without this it would build OIDC redirect URIs as
+// http://<pod>:8080/signin-oidc, which Authelia rejects at the (PAR) challenge — breaking both
+// login and the "/" health path. Honoring X-Forwarded-Proto/Host makes the app see
+// https://<external-host>, so the redirect_uri matches the registered client URI.
+// KnownNetworks/KnownProxies are cleared because the only peer that reaches the pod is the
+// in-cluster ingress (arbitrary pod IP), which the default allow-list would otherwise reject.
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor
+        | ForwardedHeaders.XForwardedProto
+        | ForwardedHeaders.XForwardedHost;
+    o.KnownIPNetworks.Clear();
+    o.KnownProxies.Clear();
+});
+
 // DataProtection key ring persistence. In Development the default in-memory/ephemeral key
 // ring is fine (auth cookies + anti-forgery tokens are expected not to survive a restart).
 // In production the key ring MUST be persisted to durable storage, or every pod restart /
@@ -77,6 +94,10 @@ if (!string.IsNullOrWhiteSpace(keyRingPath))
 }
 
 var app = builder.Build();
+
+// Must run before any middleware that inspects scheme/host (security headers below,
+// authentication, OIDC challenge). Rewrites ctx.Request.Scheme/Host from X-Forwarded-*.
+app.UseForwardedHeaders();
 
 if (app.Environment.IsDevelopment())
 {
@@ -144,6 +165,11 @@ app.Use(async (ctx, next) =>
 
     await next();
 });
+
+// Liveness/readiness probe target. Intentionally anonymous and dependency-free: probing "/"
+// would trigger an OIDC challenge (a PAR round-trip to Authelia), coupling pod liveness to the
+// SSO provider's availability. /healthz just confirms the process is serving HTTP.
+app.MapGet("/healthz", () => Results.Ok("ok")).AllowAnonymous();
 
 // L9: /challenge triggers an ASP.NET Core challenge against the default challenge scheme
 // (OidcScheme when Auth:Provider=Oidc). RedirectToLogin and DevLogin.razor both reference
