@@ -47,6 +47,12 @@ internal sealed class OidcUserContext : IUserContext
             ?? _user.FindFirstValue("preferred_username")
             ?? string.Empty;
 
+    // Friendly login name from the "profile" scope; drives the personal-collection slug only
+    // (e.g. "deathlok1126" -> "u-deathlok1126"). Identity/RBAC still key off UserId (sub), so a
+    // username change never reassigns ownership. Empty when the IdP omits the claim.
+    public string Username =>
+        _user.FindFirstValue("preferred_username") ?? string.Empty;
+
     // Authelia delivers groups as a JSON string array via the UserInfo endpoint.
     // GetClaimsFromUserInfoEndpoint = true causes the handler to expand the JSON array into
     // individual claims, all sharing the claim type "groups". "group:" prefix matches the

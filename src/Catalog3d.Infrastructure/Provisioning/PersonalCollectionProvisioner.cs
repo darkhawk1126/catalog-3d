@@ -64,7 +64,11 @@ internal sealed class PersonalCollectionProvisioner : IPersonalCollectionProvisi
             return;
         }
 
-        var baseSlug = DerivePersonalSlug(principal);
+        // Prefer the friendly login name (e.g. "deathlok1126" -> "u-deathlok1126"); fall back to
+        // the opaque principal/sub when the IdP omits preferred_username. The slug is cosmetic —
+        // ownership keys off `principal` (sub), so deriving it from the username is safe.
+        var slugSource = !string.IsNullOrWhiteSpace(caller.Username) ? caller.Username : principal;
+        var baseSlug = DerivePersonalSlug(slugSource);
         var slug = baseSlug;
 
         // Disambiguate the rare case where two principals sanitize to the same slug: a stable

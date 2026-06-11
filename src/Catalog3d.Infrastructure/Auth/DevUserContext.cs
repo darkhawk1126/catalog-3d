@@ -29,6 +29,11 @@ internal sealed class DevUserContext : IUserContext
     public string DisplayName =>
         _user.FindFirstValue(ClaimTypes.Name) ?? string.Empty;
 
+    // Dev principals have no preferred_username; the dev user id is already friendly
+    // (e.g. "alice"), so reuse it as the slug source to keep dev slugs as "u-alice".
+    public string Username =>
+        _user.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty;
+
     // M1: normalize to lower-case so principal matching is case-insensitive end-to-end.
     // Dev config may use mixed-case group names; normalize here to match the convention
     // that OIDC and RoleAssignment rows use.

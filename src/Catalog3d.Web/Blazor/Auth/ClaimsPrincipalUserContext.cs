@@ -51,6 +51,18 @@ internal sealed class ClaimsPrincipalUserContext : IUserContext
         }
     }
 
+    // Friendly login name for personal-collection slugs; mirrors OidcUserContext/DevUserContext.
+    // OIDC: preferred_username; Dev: the dev user id (NameIdentifier). Identity stays on UserId.
+    public string Username
+    {
+        get
+        {
+            if (!IsAuthenticated) return string.Empty;
+            if (_isOidc) return _user.FindFirstValue("preferred_username") ?? string.Empty;
+            return _user.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty;
+        }
+    }
+
     public IReadOnlyList<string> Groups
     {
         get
