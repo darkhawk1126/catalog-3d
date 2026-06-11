@@ -39,6 +39,49 @@
       display: none;
     }
     #error-msg.visible { display: block; }
+
+    /* --- Viewer control bar (revealed after the model loads) --- */
+    #controls {
+      position: absolute;
+      left: 50%;
+      bottom: 16px;
+      transform: translateX(-50%);
+      display: none;               /* shown on the catalog3d:ready event */
+      gap: 4px;
+      padding: 6px;
+      border-radius: 12px;
+      background: rgba(24, 24, 30, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(8px);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+      font-family: system-ui, -apple-system, sans-serif;
+      z-index: 10;
+    }
+    #controls.visible { display: flex; }
+    #controls button {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: #d1d5db;
+      font-size: 17px;
+      line-height: 1;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+      user-select: none;
+    }
+    #controls button:hover { background: rgba(255, 255, 255, 0.10); color: #fff; }
+    #controls button:active { background: rgba(255, 255, 255, 0.18); }
+    #controls button.active { background: rgba(99, 102, 241, 0.30); color: #c7d2fe; }
+    #controls .sep {
+      width: 1px;
+      margin: 4px 2px;
+      background: rgba(255, 255, 255, 0.10);
+    }
   </style>
 </head>
 <body>
@@ -48,13 +91,65 @@
     <span id="status-text">Loading model…</span>
     <span id="error-msg"></span>
   </div>
+
+  <!-- Viewer controls. Hidden until the bundle dispatches `catalog3d:ready`. -->
+  <div id="controls" role="toolbar" aria-label="3D viewer controls">
+    <button type="button" data-action="zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+    <button type="button" data-action="zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
+    <span class="sep"></span>
+    <button type="button" data-action="fit" title="Fit to view" aria-label="Fit to view">⛶</button>
+    <button type="button" data-action="reset" title="Reset view" aria-label="Reset view">⟲</button>
+    <span class="sep"></span>
+    <button type="button" data-action="autorotate" title="Auto-rotate" aria-label="Toggle auto-rotate">⟳</button>
+    <button type="button" data-action="wireframe" title="Wireframe" aria-label="Toggle wireframe">◫</button>
+  </div>
+
   <script>
     // Geometry URL is injected server-side before the bundle runs.
     window.__CATALOG3D_GEOMETRY_URL__ = '{{GEOMETRY_URL}}';
   </script>
   <script>
     // Vendored three.js + STLLoader + viewer logic — inline bundle, no CDN dependency.
+    // Exposes window.__catalog3dViewer and dispatches `catalog3d:ready` once the STL loads.
     {{BUNDLE}}
+  </script>
+  <script>
+    // Control-bar wiring. The bundle's orbit state lives in module scope and is reached
+    // only through the window.__catalog3dViewer API it exposes after a successful load.
+    (function () {
+      var bar = document.getElementById('controls');
+      var api = function () { return window.__catalog3dViewer; };
+
+      var actions = {
+        'zoom-in':    function () { api() && api().zoomBy(0.83); },
+        'zoom-out':   function () { api() && api().zoomBy(1.20); },
+        'fit':        function () { api() && api().fitView(); },
+        'reset':      function () { api() && api().resetView(); },
+        'wireframe':  function (btn) {
+          if (!api()) return;
+          var on = !btn.classList.contains('active');
+          api().setWireframe(on);
+          btn.classList.toggle('active', on);
+        },
+        'autorotate': function (btn) {
+          if (!api()) return;
+          var on = api().toggleAutoRotate();
+          btn.classList.toggle('active', on);
+        },
+      };
+
+      bar.addEventListener('click', function (e) {
+        var btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        var fn = actions[btn.getAttribute('data-action')];
+        if (fn) fn(btn);
+      });
+
+      // Reveal the bar only once the model is actually on screen.
+      document.addEventListener('catalog3d:ready', function () {
+        bar.classList.add('visible');
+      });
+    })();
   </script>
 </body>
 </html>

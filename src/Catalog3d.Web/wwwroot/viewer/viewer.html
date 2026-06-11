@@ -39,6 +39,37 @@
       display: none;
     }
     #error-msg.visible { display: block; }
+
+    /* --- Viewer control bar (revealed after the model loads) --- */
+    #controls {
+      position: absolute;
+      left: 50%;
+      bottom: 16px;
+      transform: translateX(-50%);
+      display: none;               /* shown once the STL is on screen */
+      gap: 4px;
+      padding: 6px;
+      border-radius: 12px;
+      background: rgba(24, 24, 30, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(8px);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+      font-family: system-ui, -apple-system, sans-serif;
+      z-index: 10;
+    }
+    #controls.visible { display: flex; }
+    #controls button {
+      width: 36px; height: 36px;
+      display: flex; align-items: center; justify-content: center;
+      border: none; border-radius: 8px;
+      background: transparent; color: #d1d5db;
+      font-size: 17px; line-height: 1; cursor: pointer;
+      transition: background 0.12s, color 0.12s; user-select: none;
+    }
+    #controls button:hover { background: rgba(255, 255, 255, 0.10); color: #fff; }
+    #controls button:active { background: rgba(255, 255, 255, 0.18); }
+    #controls button.active { background: rgba(99, 102, 241, 0.30); color: #c7d2fe; }
+    #controls .sep { width: 1px; margin: 4px 2px; background: rgba(255, 255, 255, 0.10); }
   </style>
 </head>
 <body>
@@ -47,6 +78,18 @@
     <div class="spinner" id="spinner"></div>
     <span id="status-text">Loading model…</span>
     <span id="error-msg"></span>
+  </div>
+
+  <!-- Viewer controls. Hidden until the model finishes loading. -->
+  <div id="controls" role="toolbar" aria-label="3D viewer controls">
+    <button type="button" data-action="zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+    <button type="button" data-action="zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
+    <span class="sep"></span>
+    <button type="button" data-action="fit" title="Fit to view" aria-label="Fit to view">⛶</button>
+    <button type="button" data-action="reset" title="Reset view" aria-label="Reset view">⟲</button>
+    <span class="sep"></span>
+    <button type="button" data-action="autorotate" title="Auto-rotate" aria-label="Toggle auto-rotate">⟳</button>
+    <button type="button" data-action="wireframe" title="Wireframe" aria-label="Toggle wireframe">◫</button>
   </div>
 
   <script type="module">
@@ -188,11 +231,49 @@
     resizeObserver.observe(document.body);
 
     // --- Render loop ---
+    let autoRotate = false;
     function animate() {
       requestAnimationFrame(animate);
+      if (autoRotate) {
+        state.theta -= 0.005;
+        updateCamera();
+      }
       renderer.render(scene, camera);
     }
     animate();
+
+    // --- Control bar wiring ---
+    // Re-fit the camera distance to the model's bounding sphere (set once loaded).
+    let fitRadius = state.radius;
+    let fitCenter = target.clone();
+    function fitView() {
+      target.copy(fitCenter);
+      panOffset.set(0, 0, 0);
+      const halfFov = THREE.MathUtils.degToRad(camera.fov / 2);
+      state.radius = (fitRadius / Math.sin(halfFov)) * 1.2;
+      updateCamera();
+    }
+    const controls = document.getElementById('controls');
+    const controlActions = {
+      'zoom-in':  () => { state.radius = Math.max(0.001, state.radius * 0.83); updateCamera(); },
+      'zoom-out': () => { state.radius *= 1.20; updateCamera(); },
+      'fit':      () => fitView(),
+      'reset':    () => { state.theta = Math.PI / 4; state.phi = Math.PI / 3; fitView(); },
+      'wireframe': btn => {
+        material.wireframe = !material.wireframe;
+        btn.classList.toggle('active', material.wireframe);
+      },
+      'autorotate': btn => {
+        autoRotate = !autoRotate;
+        btn.classList.toggle('active', autoRotate);
+      },
+    };
+    controls.addEventListener('click', e => {
+      const btn = e.target.closest('button[data-action]');
+      if (!btn) return;
+      const fn = controlActions[btn.getAttribute('data-action')];
+      if (fn) fn(btn);
+    });
 
     // --- Load STL ---
     // withCredentials sends the auth cookie so the Download-gated endpoint accepts the request.
@@ -223,8 +304,13 @@
         camera.far = sphere.radius * 100;
         camera.updateProjectionMatrix();
 
+        // Remember the fitted framing so Fit / Reset can return to it.
+        fitRadius = sphere.radius;
+        fitCenter.copy(sphere.center);
+
         updateCamera();
         statusEl.classList.add('hidden');
+        controls.classList.add('visible');
       },
       xhr => {
         if (xhr.total > 0) {
