@@ -161,6 +161,12 @@ app.Use(async (ctx, next) =>
         var userContext = ctx.RequestServices.GetRequiredService<IUserContext>();
         var provisioner = ctx.RequestServices.GetRequiredService<IPersonalCollectionProvisioner>();
         await provisioner.EnsureProvisionedAsync(userContext, ctx.RequestAborted);
+
+        // Record the caller in the user directory so the admin role/share pickers can offer a
+        // friendly name instead of the opaque OIDC sub. Throttled in-memory, so this is a no-op
+        // on the hot path; it never gates the request (directory is not an authorization source).
+        var directory = ctx.RequestServices.GetRequiredService<IUserDirectory>();
+        await directory.UpsertCurrentAsync(userContext, ctx.RequestAborted);
     }
 
     await next();

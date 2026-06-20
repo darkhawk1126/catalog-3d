@@ -1,4 +1,5 @@
 using Catalog3d.Application.Abstractions;
+using Catalog3d.Infrastructure.Users;
 using Catalog3d.Infrastructure.Provisioning;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -47,6 +48,11 @@ public static class AuthInfrastructureExtensions
         // a singleton cache so it is a no-op after a principal's first authenticated request.
         services.AddSingleton<ProvisionedPrincipalCache>();
         services.AddScoped<IPersonalCollectionProvisioner, PersonalCollectionProvisioner>();
+
+        // User directory: a convenience picker source populated lazily as users sign in. Singleton
+        // because it uses IDbContextFactory (safe from both middleware and Blazor) and carries an
+        // in-memory write throttle. NOT an authorization source — purely for friendly name lookup.
+        services.AddSingleton<IUserDirectory, UserDirectory>();
         return services;
     }
 }

@@ -49,7 +49,12 @@ else
                             TGridItem="RoleAssignment"
                             GridTemplateColumns="1fr 160px 56px"
                             Class="assignments-grid">
-                <PropertyColumn Title="Principal" Property="@(r => r.Principal)" />
+                <TemplateColumn Title="User / Group">
+                    <div class="principal-cell">
+                        <span class="principal-label">@PrincipalLabel(context.Principal)</span>
+                        <code class="principal-sub">@context.Principal</code>
+                    </div>
+                </TemplateColumn>
                 <TemplateColumn Title="Role">
                     <span class="@RolePillClass(context.Role)">
                         @context.Role.ToString()
@@ -72,16 +77,52 @@ else
         <FluentCard Class="add-card">
             <FluentStack Orientation="Orientation.Vertical" VerticalGap="12">
 
-                <FluentTextField @bind-Value="_newPrincipal"
-                                 Label="Principal"
-                                 Placeholder="user:sub-value  or  group:name"
-                                 Style="width: 100%;" />
-                <FluentLabel Class="helper-text">
-                    Format: <strong>user:&lt;oidc-sub&gt;</strong> for a specific user (e.g.
-                    <code>user:abc123</code>) or <strong>group:&lt;name&gt;</strong> for an
-                    OIDC group (e.g. <code>group:media</code>). One principal holds at most
-                    one role per collection; assigning again replaces the existing role.
-                </FluentLabel>
+                <FluentSelect TOption="string"
+                              @bind-Value="_principalKind"
+                              Label="Assign to"
+                              Style="width: 200px;">
+                    <FluentOption TOption="string" Value="@("user")">A user</FluentOption>
+                    <FluentOption TOption="string" Value="@("group")">A group</FluentOption>
+                </FluentSelect>
+
+                @if (_principalKind == "group")
+                {
+                    <FluentTextField @bind-Value="_groupName"
+                                     Label="Group name"
+                                     Placeholder="media"
+                                     Style="width: 100%;" />
+                    <FluentLabel Class="helper-text">
+                        Enter an OIDC group name — the <code>group:</code> prefix is added for you.
+                        @if (_groups.Count > 0)
+                        {
+                            <text> Seen groups: @string.Join(", ", _groups.Select(g => g["group:".Length..]))</text>
+                        }
+                    </FluentLabel>
+                }
+                else if (_users.Count == 0)
+                {
+                    <FluentMessageBar Intent="MessageIntent.Info">
+                        No users have signed in to catalog-3d yet, so there's nobody to pick.
+                        A user appears here automatically the first time they log in.
+                    </FluentMessageBar>
+                }
+                else
+                {
+                    <FluentSelect TOption="string"
+                                  @bind-Value="_selectedUserPrincipal"
+                                  Label="User"
+                                  Style="width: 100%;">
+                        <FluentOption TOption="string" Value="@("")">Select a user…</FluentOption>
+                        @foreach (var u in _users)
+                        {
+                            <FluentOption TOption="string" Value="@u.Principal">@UserOptionLabel(u)</FluentOption>
+                        }
+                    </FluentSelect>
+                    <FluentLabel Class="helper-text">
+                        One principal holds at most one role per collection; assigning again
+                        replaces the existing role.
+                    </FluentLabel>
+                }
 
                 <FluentSelect TOption="string"
                               @bind-Value="_newRoleStr"
@@ -116,6 +157,7 @@ else
 
     [Inject] AdminAuthHelper AuthHelper { get; set; } = null!;
     [Inject] IDbContextFactory<CatalogDbContext> DbFactory { get; set; } = null!;
+    [Inject] IUserDirectory Directory { get; set; } = null!;
     [Inject] NavigationManager Nav { get; set; } = null!;
     [Inject] IToastService Toast { get; set; } = null!;
     [Inject] IDialogService Dialog { get; set; } = null!;
@@ -125,7 +167,14 @@ else
     private bool _loading = true;
     private bool _saving;
 
-    private string _newPrincipal = string.Empty;
+    // Picker source (captured directory) + friendly-name map for existing rows.
+    private List<DirectoryUser> _users = new();
+    private List<string> _groups = new();
+    private Dictionary<string, string> _labels = new(StringComparer.OrdinalIgnoreCase);
+
+    private string _principalKind = "user";        // "user" | "group"
+    private string _selectedUserPrincipal = string.Empty;
+    private string _groupName = string.Empty;
     private string _newRoleStr = nameof(CollectionRole.Preview);
     private string _addError = string.Empty;
 
@@ -155,6 +204,10 @@ else
             return;
         }
 
+        // Load the picker source (users seen signing in + groups observed on their tokens).
+        _users = (await Directory.ListUsersAsync()).ToList();
+        _groups = (await Directory.ListGroupsAsync()).ToList();
+
         await LoadAssignmentsAsync(db);
         _loading = false;
     }
@@ -166,27 +219,60 @@ else
             .Where(r => r.CollectionId == _collection!.Id)
             .OrderBy(r => r.Principal)
             .ToListAsync();
+
+        await RefreshLabelsAsync();
+    }
+
+    // Resolve each assignment's principal to a friendly label for display.
+    private async Task RefreshLabelsAsync()
+    {
+        var resolved = await Directory.ResolveLabelsAsync(_assignments.Select(a => a.Principal));
+        _labels = new Dictionary<string, string>(resolved, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private string PrincipalLabel(string principal) =>
+        _labels.TryGetValue(principal, out var label) ? label : principal;
+
+    private static string UserOptionLabel(DirectoryUser u)
+    {
+        var display = string.IsNullOrWhiteSpace(u.DisplayName) ? u.Username : u.DisplayName;
+        if (string.IsNullOrWhiteSpace(display)) return u.Principal;
+        return !string.IsNullOrWhiteSpace(u.Username)
+            && !string.Equals(u.Username, display, StringComparison.OrdinalIgnoreCase)
+                ? $"{display} ({u.Username})"
+                : display;
     }
 
     private async Task AddAssignmentAsync()
     {
         _addError = string.Empty;
 
-        // M1: normalize to lower-case at write so DB rows are consistently cased,
-        // making the EF IN-clause match independent of column collation.
-        var principal = _newPrincipal.Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(principal))
+        // Build the principal from the picker: a selected user already carries its "user:<sub>"
+        // form; a group name gets the "group:" prefix added here.
+        string principal;
+        if (_principalKind == "group")
         {
-            _addError = "Principal is required.";
-            return;
+            var name = _groupName.Trim();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                _addError = "Enter a group name.";
+                return;
+            }
+            principal = name.StartsWith("group:", StringComparison.OrdinalIgnoreCase) ? name : "group:" + name;
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(_selectedUserPrincipal))
+            {
+                _addError = "Select a user.";
+                return;
+            }
+            principal = _selectedUserPrincipal;
         }
 
-        if (!principal.StartsWith("user:", StringComparison.OrdinalIgnoreCase) &&
-            !principal.StartsWith("group:", StringComparison.OrdinalIgnoreCase))
-        {
-            _addError = "Principal must start with \"user:\" or \"group:\".";
-            return;
-        }
+        // M1: normalize to lower-case at write so DB rows are consistently cased,
+        // making the EF IN-clause match independent of column collation.
+        principal = principal.ToLowerInvariant();
 
         if (!Enum.TryParse<CollectionRole>(_newRoleStr, out var role))
         {
@@ -218,9 +304,16 @@ else
             }
 
             await db.SaveChangesAsync();
-            Toast.ShowSuccess($"Assigned {role} to {principal}.");
 
-            _newPrincipal = string.Empty;
+            // Friendly confirmation: use the picked user's label when available.
+            var label = _users.FirstOrDefault(u =>
+                string.Equals(u.Principal, principal, StringComparison.OrdinalIgnoreCase)) is { } picked
+                ? UserOptionLabel(picked)
+                : principal;
+            Toast.ShowSuccess($"Assigned {role} to {label}.");
+
+            _selectedUserPrincipal = string.Empty;
+            _groupName = string.Empty;
 
             // Refresh list from a new context.
             await using var db2 = await DbFactory.CreateDbContextAsync();

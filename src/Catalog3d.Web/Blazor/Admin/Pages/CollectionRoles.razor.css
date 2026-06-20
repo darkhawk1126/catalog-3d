@@ -53,6 +53,28 @@
     line-height: 1.5;
 }
 
+.principal-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+}
+
+.principal-label {
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.principal-sub {
+    font-size: 0.7rem;
+    opacity: 0.6;
+    background: none !important;
+    border: none !important;
+    padding: 0 !important;
+    color: var(--neutral-foreground-hint) !important;
+}
+
 code {
     font-family: var(--c3d-mono, 'JetBrains Mono', monospace) !important;
     font-size: 0.85em;

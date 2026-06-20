@@ -161,6 +161,103 @@ else
                     File details and downloads require Download access.
                 </FluentMessageBar>
             }
+
+            @* Sharing — owner / admin only. Per-STL visibility + explicit per-user/group grants. *@
+            @if (_isAdmin)
+            {
+                <div class="share-card">
+                    <span class="c3d-section-label">Sharing</span>
+
+                    <FluentSelect TOption="string"
+                                  @bind-Value="_visibilityStr"
+                                  @bind-Value:after="OnVisibilityChangedAsync"
+                                  Label="Who can see this model"
+                                  Disabled="@_savingVisibility"
+                                  Style="width: 100%;">
+                        <FluentOption TOption="string" Value="@("Private")">Private — only you</FluentOption>
+                        <FluentOption TOption="string" Value="@("Shared")">Shared — chosen people</FluentOption>
+                        <FluentOption TOption="string" Value="@("Public")">Public — anyone signed in</FluentOption>
+                    </FluentSelect>
+                    <FluentLabel Class="share-hint">
+                        Sharing or publishing grants <strong>download</strong> — an interactive 3D view is
+                        download-equivalent. Private models stay invisible to everyone but you.
+                    </FluentLabel>
+
+                    @if (_visibilityStr == nameof(ModelVisibility.Shared))
+                    {
+                        <div class="share-list">
+                            @if (_shares.Count == 0)
+                            {
+                                <FluentMessageBar Intent="MessageIntent.Info">
+                                    Not shared with anyone yet — add a user or group below.
+                                </FluentMessageBar>
+                            }
+                            else
+                            {
+                                <FluentDataGrid Items="@_shares.AsQueryable()"
+                                                TGridItem="Catalog3d.Domain.Entities.ModelShare"
+                                                GridTemplateColumns="1fr 56px">
+                                    <TemplateColumn Title="Shared with">
+                                        <div class="principal-cell">
+                                            <span class="principal-label">@ShareLabel(context.Principal)</span>
+                                            <code class="principal-sub">@context.Principal</code>
+                                        </div>
+                                    </TemplateColumn>
+                                    <TemplateColumn Title="" Align="Align.End">
+                                        <FluentButton Appearance="Appearance.Lightweight"
+                                                      IconStart="@(new Size20.Delete())"
+                                                      Title="Revoke share"
+                                                      OnClick="@(() => RemoveShareAsync(context))" />
+                                    </TemplateColumn>
+                                </FluentDataGrid>
+                            }
+
+                            <div class="share-add">
+                                <FluentSelect TOption="string" @bind-Value="_sharePrincipalKind"
+                                              Label="Share with" Style="width: 160px;">
+                                    <FluentOption TOption="string" Value="@("user")">A user</FluentOption>
+                                    <FluentOption TOption="string" Value="@("group")">A group</FluentOption>
+                                </FluentSelect>
+
+                                @if (_sharePrincipalKind == "group")
+                                {
+                                    <FluentTextField @bind-Value="_shareGroupName"
+                                                     Label="Group name" Placeholder="media"
+                                                     Style="width: 100%;" />
+                                }
+                                else if (_users.Count == 0)
+                                {
+                                    <FluentMessageBar Intent="MessageIntent.Info">
+                                        No users have signed in yet, so there's nobody to pick.
+                                    </FluentMessageBar>
+                                }
+                                else
+                                {
+                                    <FluentSelect TOption="string" @bind-Value="_shareSelectedUser"
+                                                  Label="User" Style="width: 100%;">
+                                        <FluentOption TOption="string" Value="@("")">Select a user…</FluentOption>
+                                        @foreach (var u in _users)
+                                        {
+                                            <FluentOption TOption="string" Value="@u.Principal">@UserOptionLabel(u)</FluentOption>
+                                        }
+                                    </FluentSelect>
+                                }
+
+                                @if (!string.IsNullOrWhiteSpace(_shareAddError))
+                                {
+                                    <FluentMessageBar Intent="MessageIntent.Error">@_shareAddError</FluentMessageBar>
+                                }
+
+                                <FluentButton Appearance="Appearance.Accent"
+                                              IconStart="@(new Size20.Add())"
+                                              OnClick="@AddShareAsync" Loading="@_savingShare">
+                                    Add
+                                </FluentButton>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
         </div>
     </div>
 }
@@ -170,6 +267,7 @@ else
 
     [Inject] AdminAuthHelper AuthHelper { get; set; } = null!;
     [Inject] IDbContextFactory<CatalogDbContext> DbFactory { get; set; } = null!;
+    [Inject] IUserDirectory Directory { get; set; } = null!;
     [Inject] NavigationManager Nav { get; set; } = null!;
     [Inject] IToastService Toast { get; set; } = null!;
     [Inject] IDialogService Dialog { get; set; } = null!;
@@ -183,6 +281,19 @@ else
     private bool _loading = true;
     private bool _isAdmin;
     private bool _canDownload;
+
+    // ---- sharing state (admin only) ----
+    private string _visibilityStr = nameof(ModelVisibility.Private);
+    private bool _savingVisibility;
+    private List<Catalog3d.Domain.Entities.ModelShare> _shares = new();
+    private Dictionary<string, string> _shareLabels = new(StringComparer.OrdinalIgnoreCase);
+    private List<DirectoryUser> _users = new();
+    private List<string> _groups = new();
+    private string _sharePrincipalKind = "user";   // "user" | "group"
+    private string _shareSelectedUser = string.Empty;
+    private string _shareGroupName = string.Empty;
+    private string _shareAddError = string.Empty;
+    private bool _savingShare;
 
     // ---- action state ----
     private bool _retriggering;
@@ -232,7 +343,183 @@ else
             .Any(f => f.Kind == Catalog3d.Domain.Entities.ModelFileKind.Thumbnail
                    && f.RenderStatus == Catalog3d.Domain.Entities.RenderStatus.Complete);
 
+        _visibilityStr = _model.Visibility.ToString();
+
+        // Managers (owner / collection-admin / site-admin) get the sharing controls; load the
+        // picker source and any existing per-model shares.
+        if (_isAdmin)
+        {
+            _users = (await Directory.ListUsersAsync()).ToList();
+            _groups = (await Directory.ListGroupsAsync()).ToList();
+            await LoadSharesAsync();
+        }
+
         _loading = false;
+    }
+
+    // ---- sharing helpers ----
+
+    private async Task LoadSharesAsync()
+    {
+        if (_model is null) return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _shares = await db.ModelShares
+            .AsNoTracking()
+            .Where(s => s.ModelId == _model.Id)
+            .OrderBy(s => s.Principal)
+            .ToListAsync();
+
+        var resolved = await Directory.ResolveLabelsAsync(_shares.Select(s => s.Principal));
+        _shareLabels = new Dictionary<string, string>(resolved, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private string ShareLabel(string principal) =>
+        _shareLabels.TryGetValue(principal, out var label) ? label : principal;
+
+    private static string UserOptionLabel(DirectoryUser u)
+    {
+        var display = string.IsNullOrWhiteSpace(u.DisplayName) ? u.Username : u.DisplayName;
+        if (string.IsNullOrWhiteSpace(display)) return u.Principal;
+        return !string.IsNullOrWhiteSpace(u.Username)
+            && !string.Equals(u.Username, display, StringComparison.OrdinalIgnoreCase)
+                ? $"{display} ({u.Username})"
+                : display;
+    }
+
+    private async Task OnVisibilityChangedAsync()
+    {
+        if (_model is null) return;
+
+        if (!Enum.TryParse<ModelVisibility>(_visibilityStr, out var visibility))
+        {
+            // Reset the bound value to the model's actual state and bail.
+            _visibilityStr = _model.Visibility.ToString();
+            return;
+        }
+
+        if (visibility == _model.Visibility) return;
+
+        _savingVisibility = true;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var model = await db.Models.FirstOrDefaultAsync(m => m.Id == _model.Id);
+            if (model is not null)
+            {
+                model.Visibility = visibility;
+                model.UpdatedAt = DateTimeOffset.UtcNow;
+                await db.SaveChangesAsync();
+                _model.Visibility = visibility;
+            }
+
+            // Refresh the share list when switching into Shared so the panel is populated.
+            if (visibility == ModelVisibility.Shared)
+                await LoadSharesAsync();
+
+            Toast.ShowSuccess($"Visibility set to {visibility}.");
+        }
+        catch (Exception ex)
+        {
+            Toast.ShowError($"Failed to update visibility: {ex.Message}");
+            _visibilityStr = _model.Visibility.ToString();
+        }
+        finally
+        {
+            _savingVisibility = false;
+        }
+    }
+
+    private async Task AddShareAsync()
+    {
+        if (_model is null) return;
+        _shareAddError = string.Empty;
+
+        string principal;
+        if (_sharePrincipalKind == "group")
+        {
+            var name = _shareGroupName.Trim();
+            if (string.IsNullOrWhiteSpace(name)) { _shareAddError = "Enter a group name."; return; }
+            principal = name.StartsWith("group:", StringComparison.OrdinalIgnoreCase) ? name : "group:" + name;
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(_shareSelectedUser)) { _shareAddError = "Select a user."; return; }
+            principal = _shareSelectedUser;
+        }
+
+        // Normalize to lower-case to match the principal convention used everywhere else.
+        principal = principal.ToLowerInvariant();
+
+        _savingShare = true;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var exists = await db.ModelShares
+                .AnyAsync(s => s.ModelId == _model.Id && s.Principal == principal);
+
+            if (!exists)
+            {
+                db.ModelShares.Add(new Catalog3d.Domain.Entities.ModelShare
+                {
+                    ModelId = _model.Id,
+                    Principal = principal,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                });
+                await db.SaveChangesAsync();
+            }
+
+            var label = _users.FirstOrDefault(u =>
+                string.Equals(u.Principal, principal, StringComparison.OrdinalIgnoreCase)) is { } picked
+                ? UserOptionLabel(picked)
+                : principal;
+            Toast.ShowSuccess($"Shared with {label}.");
+
+            _shareSelectedUser = string.Empty;
+            _shareGroupName = string.Empty;
+            await LoadSharesAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.ShowError($"Failed to add share: {ex.Message}");
+        }
+        finally
+        {
+            _savingShare = false;
+        }
+    }
+
+    private async Task RemoveShareAsync(Catalog3d.Domain.Entities.ModelShare share)
+    {
+        if (_model is null) return;
+
+        var dialogRef = await Dialog.ShowConfirmationAsync(
+            $"Revoke access for \"{ShareLabel(share.Principal)}\"?",
+            primaryText: "Revoke",
+            secondaryText: "Cancel",
+            title: "Confirm revoke");
+
+        var result = await dialogRef.Result;
+        if (result.Cancelled) return;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var row = await db.ModelShares
+                .FirstOrDefaultAsync(s => s.ModelId == _model.Id && s.Principal == share.Principal);
+            if (row is not null)
+            {
+                db.ModelShares.Remove(row);
+                await db.SaveChangesAsync();
+            }
+
+            Toast.ShowSuccess($"Revoked {ShareLabel(share.Principal)}.");
+            await LoadSharesAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.ShowError($"Failed to revoke: {ex.Message}");
+        }
     }
 
     // ---- admin actions ----
